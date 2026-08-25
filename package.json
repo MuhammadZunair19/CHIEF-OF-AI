@@ -1,0 +1,26 @@
+{
+  "name": "chief",
+  "private": true,
+  "packageManager": "pnpm@10.15.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "infra:up": "docker compose up -d",
+    "infra:status": "docker compose ps",
+    "infra:down": "docker compose down",
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "format": "prettier --write .",
+    "db:generate": "pnpm --filter @chief/database db:generate",
+    "db:migrate": "pnpm --filter @chief/database db:migrate",
+    "db:seed": "pnpm --filter @chief/database db:seed"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "turbo": "^2.5.6",
+    "typescript": "^5.9.2"
+  }
+}

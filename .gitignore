@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+.turbo
+.env
+.env.local
+packages/database/generated
+*.log
+*.tsbuildinfo
+.env.example

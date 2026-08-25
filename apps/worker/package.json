@@ -1,0 +1,26 @@
+{
+  "name": "@chief/worker",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/dev.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/worker.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@chief/contracts": "workspace:*",
+    "@chief/database": "workspace:*",
+    "@chief/google": "workspace:*",
+    "@chief/llm": "workspace:*",
+    "@chief/queue": "workspace:*",
+    "bullmq": "^6.0.0",
+    "googleapis": "^160.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "@types/node": "^24.3.0"
+  }
+}
