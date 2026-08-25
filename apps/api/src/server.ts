@@ -53,6 +53,9 @@ const googleAuthFor = async (userId: string) => {
   if (!account) throw new Error("Google account is not connected");
   return googleClient({ ...(account.accessToken ? { accessToken: account.accessToken } : {}), ...(account.refreshToken ? { refreshToken: account.refreshToken } : {}) });
 };
+const addressFromSender = (value: string) => (value.match(/<\s*([^<>]+)\s*>/)?.[1] ?? value).trim().toLowerCase();
+const nameFromSender = (value: string) => value.match(/^\s*"?([^"<]+?)"?\s*</)?.[1]?.trim() ?? null;
+const topicsFromSubjects = (subjects: string[]) => { const ignored = new Set(["about","after","before","from","have","hello","meeting","please","regarding","thanks","that","the","this","with","your"]); const counts = new Map<string,number>(); for(const subject of subjects) for(const word of subject.toLowerCase().replace(/[^a-z0-9\s-]/g," ").split(/\s+/)) if(word.length>3&&!ignored.has(word)) counts.set(word,(counts.get(word)??0)+1); return [...counts].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([word])=>word); };
 app.get("/health", async () => ({ status: "ok" }));
 app.get("/ready", async (_req, reply) => {
   try {
@@ -343,6 +346,27 @@ app.get("/api/follow-ups", async (req, reply) => {
   ];
   const preference = new Map(preferences.map((item) => [item.signalKey, item]));
   return signals.filter((signal) => { const item = preference.get(signal.key); return !item?.dismissedAt && (!item?.snoozedUntil || item.snoozedUntil <= now); });
+});
+app.get("/api/relationships", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const contacts = await db.contactMemory.findMany({ where: { userId: user.id }, orderBy: { lastInteractionAt: "desc" }, take: 100 });
+  return Promise.all(contacts.map(async (contact) => ({ ...contact, openCommitments: await db.task.count({ where: { userId: user.id, status: { notIn: ["DONE", "ARCHIVED"] }, email: { sender: { contains: contact.email, mode: "insensitive" } } } }) })));
+});
+app.post("/api/relationships/rebuild", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const emails = await db.email.findMany({ where: { userId: user.id }, select: { sender: true, subject: true, receivedAt: true } }), groups = new Map<string,{name:string|null;subjects:string[];last:Date;count:number}>();
+  for (const email of emails) { const address = addressFromSender(email.sender), current = groups.get(address); if(current){current.subjects.push(email.subject);current.count++;if(email.receivedAt>current.last)current.last=email.receivedAt}else groups.set(address,{name:nameFromSender(email.sender),subjects:[email.subject],last:email.receivedAt,count:1}); }
+  for (const [email, group] of groups) await db.contactMemory.upsert({ where: { userId_email: { userId: user.id, email } }, update: { displayName: group.name, commonTopics: topicsFromSubjects(group.subjects), interactionCount: group.count, lastInteractionAt: group.last }, create: { userId: user.id, email, displayName: group.name, commonTopics: topicsFromSubjects(group.subjects), interactionCount: group.count, lastInteractionAt: group.last } });
+  return { contacts: groups.size };
+});
+app.patch("/api/relationships/:id", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const id = (req.params as { id: string }).id, body = z.object({ displayName: z.string().trim().max(120).nullable().optional(), notes: z.string().max(5000).nullable().optional(), preferredMeetingMinutes: z.number().int().min(15).max(240).nullable().optional(), importantDate: z.iso.datetime().nullable().optional() }).parse(req.body), contact = await db.contactMemory.findFirst({ where: { id, userId: user.id } });
+  if(!contact)return reply.code(404).send({error:"Contact memory not found"});
+  return db.contactMemory.update({ where: { id }, data: { ...body, importantDate: body.importantDate === undefined ? undefined : body.importantDate === null ? null : new Date(body.importantDate) } });
 });
 app.post("/api/follow-ups/action", async (req, reply) => {
   const user = await requireUser(req, reply);

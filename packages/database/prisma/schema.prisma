@@ -68,6 +68,7 @@ model User {
   followUpPreferences FollowUpPreference[]
   gmailWatch GmailWatch?
   sprints Sprint[]
+  contacts ContactMemory[]
 }
 model Session {
   id String @id @default(cuid())
@@ -356,4 +357,22 @@ model FollowUpPreference {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@unique([userId, signalKey])
   @@index([userId, snoozedUntil])
+}
+model ContactMemory {
+  id String @id @default(cuid())
+  userId String
+  email String
+  displayName String?
+  notes String?
+  commonTopics String[]
+  interactionCount Int @default(0)
+  lastInteractionAt DateTime
+  preferredMeetingMinutes Int?
+  typicalResponseHours Float?
+  importantDate DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, email])
+  @@index([userId, lastInteractionAt(sort: Desc)])
 }

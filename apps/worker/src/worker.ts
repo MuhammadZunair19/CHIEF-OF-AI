@@ -54,7 +54,8 @@ async function sync(userId: string) {
       update: item,
       create: { userId, ...item },
     });
-  for (const message of messages)
+  for (const message of messages) {
+    const existing = await db.email.findUnique({ where: { userId_gmailMessageId: { userId, gmailMessageId: message.gmailMessageId } }, select: { id: true } });
     await db.email.upsert({
       where: {
         userId_gmailMessageId: {
@@ -69,6 +70,8 @@ async function sync(userId: string) {
         gmailThreadId: message.gmailThreadId ?? null,
       },
     });
+    if (!existing) await rememberContact(userId, message.sender, message.subject, message.receivedAt);
+  }
   return { messages: messages.length, events: events.length };
 }
 async function availability(userId: string) {
@@ -108,6 +111,18 @@ async function availability(userId: string) {
 function emailAddress(value: string) {
   const bracketed = value.match(/<\s*([^<>]+)\s*>/);
   return (bracketed?.[1] ?? value).trim();
+}
+function contactName(value: string) {
+  const bracketed = value.match(/^\s*"?([^"<]+?)"?\s*</);
+  return bracketed?.[1]?.trim() || null;
+}
+function subjectTopics(subject: string) {
+  const ignored = new Set(["about","after","before","from","have","hello","meeting","please","re","regarding","thanks","that","the","this","with","your"]);
+  return [...new Set(subject.toLowerCase().replace(/[^a-z0-9\s-]/g," ").split(/\s+/).filter(word=>word.length>3&&!ignored.has(word)))].slice(0,5);
+}
+async function rememberContact(userId: string, sender: string, subject: string, receivedAt: Date) {
+  const email = emailAddress(sender).toLowerCase(), existing = await db.contactMemory.findUnique({ where: { userId_email: { userId, email } } }), topics = [...new Set([...(existing?.commonTopics ?? []), ...subjectTopics(subject)])].slice(-10);
+  await db.contactMemory.upsert({ where: { userId_email: { userId, email } }, update: { displayName: contactName(sender) ?? existing?.displayName, commonTopics: topics, interactionCount: { increment: 1 }, lastInteractionAt: receivedAt }, create: { userId, email, displayName: contactName(sender), commonTopics: topics, interactionCount: 1, lastInteractionAt: receivedAt } });
 }
 async function analyze(userId: string, emailId: string) {
   const email = await db.email.findFirstOrThrow({

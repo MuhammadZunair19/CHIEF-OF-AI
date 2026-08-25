@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Sun,
   SquareKanban,
+  UsersRound,
   X,
 } from "lucide-react";
 const nav = [
@@ -26,6 +27,7 @@ const nav = [
   ["/inbox", "Inbox", Inbox],
   ["/tasks", "Tasks", SquareKanban],
   ["/follow-ups", "Follow-up radar", Radar],
+  ["/relationships", "Relationships", UsersRound],
   ["/calendar", "Calendar", CalendarDays],
   ["/approvals", "Approvals", ShieldCheck],
   ["/activity", "Activity", Activity],
