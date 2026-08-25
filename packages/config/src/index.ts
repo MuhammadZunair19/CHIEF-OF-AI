@@ -10,6 +10,10 @@ export const envSchema = z.object({
   BETTER_AUTH_URL: z.string().url(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_CLOUD_PROJECT: z.string().optional(),
+  GMAIL_PUBSUB_TOPIC: z.string().optional(),
+  GMAIL_PUSH_AUDIENCE: z.string().url().optional(),
+  GMAIL_PUSH_SERVICE_ACCOUNT: z.string().email().optional(),
   TOKEN_ENCRYPTION_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default("gemini-3.5-flash-lite"),
@@ -28,4 +32,10 @@ export const integrationState = (env: Env) => ({
     env.TOKEN_ENCRYPTION_KEY,
   ),
   gemini: Boolean(env.GEMINI_API_KEY),
+  gmailPush: Boolean(
+    env.GOOGLE_CLOUD_PROJECT &&
+    env.GMAIL_PUBSUB_TOPIC &&
+    env.GMAIL_PUSH_AUDIENCE &&
+    env.GMAIL_PUSH_SERVICE_ACCOUNT,
+  ),
 });

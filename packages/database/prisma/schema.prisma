@@ -65,6 +65,10 @@ model User {
   runs AgentRun[]
   settings UserSettings?
   briefs DailyBrief[]
+  followUpPreferences FollowUpPreference[]
+  gmailWatch GmailWatch?
+  sprints Sprint[]
+  contacts ContactMemory[]
 }
 model Session {
   id String @id @default(cuid())
@@ -120,6 +124,18 @@ model GoogleConnection {
   updatedAt DateTime @updatedAt
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+model GmailWatch {
+  id String @id @default(cuid())
+  userId String @unique
+  historyId String
+  expiresAt DateTime
+  status String @default("ACTIVE")
+  lastNotificationAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([expiresAt])
+}
 model Email {
   id String @id @default(cuid())
   userId String
@@ -131,6 +147,9 @@ model Email {
   preview String
   bodyText String?
   unread Boolean @default(true)
+  triageStatus String @default("INBOX")
+  snoozedUntil DateTime?
+  handledAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -141,6 +160,7 @@ model Email {
   runs AgentRun[]
   @@unique([userId, gmailMessageId])
   @@index([userId, receivedAt(sort: Desc)])
+  @@index([userId, triageStatus, snoozedUntil])
 }
 model EmailAnalysis {
   id String @id @default(cuid())
@@ -176,13 +196,37 @@ model Task {
   status TaskStatus @default(TODO)
   dueAt DateTime?
   labels String[]
+  sprintId String?
+  estimate Int?
+  assignee String?
+  project String?
+  blockedReason String?
   source String @default("USER")
   createdByAi Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   email Email? @relation(fields: [emailId], references: [id], onDelete: SetNull)
+  sprint Sprint? @relation(fields: [sprintId], references: [id], onDelete: SetNull)
   @@index([userId, status])
+  @@index([sprintId, status])
+}
+model Sprint {
+  id String @id @default(cuid())
+  userId String
+  name String
+  goal String?
+  status String @default("PLANNED")
+  startAt DateTime
+  endAt DateTime
+  wipLimit Int @default(3)
+  review String?
+  retrospective String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks Task[]
+  @@index([userId, status, startAt])
 }
 model CalendarEvent {
   id String @id @default(cuid())
@@ -301,4 +345,34 @@ model EventRecord {
   data Json?
   createdAt DateTime @default(now())
   @@index([userId, createdAt])
+}
+model FollowUpPreference {
+  id String @id @default(cuid())
+  userId String
+  signalKey String
+  snoozedUntil DateTime?
+  dismissedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, signalKey])
+  @@index([userId, snoozedUntil])
+}
+model ContactMemory {
+  id String @id @default(cuid())
+  userId String
+  email String
+  displayName String?
+  notes String?
+  commonTopics String[]
+  interactionCount Int @default(0)
+  lastInteractionAt DateTime
+  preferredMeetingMinutes Int?
+  typicalResponseHours Float?
+  importantDate DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, email])
+  @@index([userId, lastInteractionAt(sort: Desc)])
 }

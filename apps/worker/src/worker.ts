@@ -7,6 +7,7 @@ import {
   googleClient,
   listRecentMessages,
   listUpcomingEvents,
+  startGmailWatch,
 } from "@chief/google";
 import {
   ApprovalPayloadSchema,
@@ -53,7 +54,16 @@ async function sync(userId: string) {
       update: item,
       create: { userId, ...item },
     });
-  for (const message of messages)
+  for (const message of messages) {
+    const existing = await db.email.findUnique({
+      where: {
+        userId_gmailMessageId: {
+          userId,
+          gmailMessageId: message.gmailMessageId,
+        },
+      },
+      select: { id: true },
+    });
     await db.email.upsert({
       where: {
         userId_gmailMessageId: {
@@ -68,6 +78,14 @@ async function sync(userId: string) {
         gmailThreadId: message.gmailThreadId ?? null,
       },
     });
+    if (!existing)
+      await rememberContact(
+        userId,
+        message.sender,
+        message.subject,
+        message.receivedAt,
+      );
+  }
   return { messages: messages.length, events: events.length };
 }
 async function availability(userId: string) {
@@ -107,6 +125,73 @@ async function availability(userId: string) {
 function emailAddress(value: string) {
   const bracketed = value.match(/<\s*([^<>]+)\s*>/);
   return (bracketed?.[1] ?? value).trim();
+}
+function contactName(value: string) {
+  const bracketed = value.match(/^\s*"?([^"<]+?)"?\s*</);
+  return bracketed?.[1]?.trim() || null;
+}
+function subjectTopics(subject: string) {
+  const ignored = new Set([
+    "about",
+    "after",
+    "before",
+    "from",
+    "have",
+    "hello",
+    "meeting",
+    "please",
+    "re",
+    "regarding",
+    "thanks",
+    "that",
+    "the",
+    "this",
+    "with",
+    "your",
+  ]);
+  return [
+    ...new Set(
+      subject
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, " ")
+        .split(/\s+/)
+        .filter((word) => word.length > 3 && !ignored.has(word)),
+    ),
+  ].slice(0, 5);
+}
+async function rememberContact(
+  userId: string,
+  sender: string,
+  subject: string,
+  receivedAt: Date,
+) {
+  const email = emailAddress(sender).toLowerCase(),
+    existing = await db.contactMemory.findUnique({
+      where: { userId_email: { userId, email } },
+    }),
+    topics = [
+      ...new Set([
+        ...(existing?.commonTopics ?? []),
+        ...subjectTopics(subject),
+      ]),
+    ].slice(-10);
+  await db.contactMemory.upsert({
+    where: { userId_email: { userId, email } },
+    update: {
+      displayName: contactName(sender) ?? existing?.displayName,
+      commonTopics: topics,
+      interactionCount: { increment: 1 },
+      lastInteractionAt: receivedAt,
+    },
+    create: {
+      userId,
+      email,
+      displayName: contactName(sender),
+      commonTopics: topics,
+      interactionCount: 1,
+      lastInteractionAt: receivedAt,
+    },
+  });
 }
 async function analyze(userId: string, emailId: string) {
   const email = await db.email.findFirstOrThrow({
@@ -250,6 +335,75 @@ async function analyze(userId: string, emailId: string) {
     throw error;
   }
 }
+async function draftReply(userId: string, emailId: string, tone: string) {
+  const email = await db.email.findFirstOrThrow({
+      where: { id: emailId, userId },
+    }),
+    settings = await db.userSettings.upsert({
+      where: { userId },
+      update: {},
+      create: { userId },
+    }),
+    run = await db.agentRun.create({
+      data: {
+        userId,
+        emailId,
+        trigger: "DRAFT_REQUEST",
+        status: "RUNNING",
+        startedAt: new Date(),
+        inputSummary: `Draft ${tone} reply to ${email.subject}`,
+      },
+    });
+  await event(userId, "agent.run.started", `Drafting a ${tone} reply`, run.id);
+  try {
+    const reply = await createProvider().draftReply({
+        subject: email.subject,
+        sender: email.sender,
+        body: email.bodyText ?? email.preview,
+        timezone: settings.timezone,
+        tone,
+      }),
+      draft = await db.emailDraft.create({
+        data: {
+          emailId,
+          body: reply.body,
+          recipients: [emailAddress(email.sender)],
+          subject: `Re: ${email.subject}`,
+          status: "SUGGESTED",
+        },
+      });
+    await db.agentRun.update({
+      where: { id: run.id },
+      data: {
+        status: "COMPLETED",
+        finishedAt: new Date(),
+        resultSummary: `${tone} reply drafted`,
+      },
+    });
+    await event(
+      userId,
+      "agent.run.completed",
+      "Reply draft is ready for review",
+      run.id,
+      { emailId, draftId: draft.id },
+    );
+    return draft;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Draft generation failed";
+    await db.agentRun.update({
+      where: { id: run.id },
+      data: { status: "FAILED", finishedAt: new Date(), error: message },
+    });
+    await event(
+      userId,
+      "agent.run.failed",
+      "Reply drafting is temporarily unavailable",
+      run.id,
+    );
+    throw error;
+  }
+}
 async function execute(userId: string, approvalId: string) {
   const approval = await db.approvalRequest.findFirstOrThrow({
     where: { id: approvalId, userId },
@@ -268,13 +422,15 @@ async function execute(userId: string, approvalId: string) {
         rawPayload.kind === "SEND_EMAIL" && Array.isArray(rawPayload.to)
           ? {
               ...rawPayload,
-              to: rawPayload.to.map((value) =>
-                emailAddress(String(value)),
-              ),
+              to: rawPayload.to.map((value) => emailAddress(String(value))),
             }
           : rawPayload,
       payload = ApprovalPayloadSchema.parse(normalizedPayload),
       auth = await authFor(userId);
+    const stillApproved = await db.approvalRequest.count({
+      where: { id: approval.id, userId, status: "APPROVED" },
+    });
+    if (!stillApproved) return;
     if (payload.kind === "SEND_EMAIL") {
       const body = approval.draft?.body ?? payload.body,
         raw = Buffer.from(
@@ -286,25 +442,39 @@ async function execute(userId: string, approvalId: string) {
             body,
           ].join("\r\n"),
         ).toString("base64url");
-      await google
-        .gmail({ version: "v1", auth })
-        .users.messages.send({
-          userId: "me",
-          requestBody: { raw, threadId: payload.gmailThreadId },
-        });
-    } else
-      await google
-        .calendar({ version: "v3", auth })
-        .events.insert({
-          calendarId: "primary",
-          sendUpdates: "all",
-          requestBody: {
-            summary: payload.title,
-            start: { dateTime: payload.start },
-            end: { dateTime: payload.end },
-            attendees: payload.attendees.map((email) => ({ email })),
+      await google.gmail({ version: "v1", auth }).users.messages.send({
+        userId: "me",
+        requestBody: { raw, threadId: payload.gmailThreadId },
+      });
+    } else if (payload.kind === "CREATE_EVENT")
+      await google.calendar({ version: "v3", auth }).events.insert({
+        calendarId: "primary",
+        sendUpdates: "all",
+        requestBody: {
+          summary: payload.title,
+          start: { dateTime: payload.start },
+          end: { dateTime: payload.end },
+          attendees: payload.attendees.map((email) => ({ email })),
+        },
+      });
+    else
+      await google.calendar({ version: "v3", auth }).events.insert({
+        calendarId: "primary",
+        requestBody: {
+          summary: payload.title,
+          eventType: "focusTime",
+          transparency: "opaque",
+          start: { dateTime: payload.start },
+          end: { dateTime: payload.end },
+          focusTimeProperties: {
+            autoDeclineMode: payload.autoDecline
+              ? "declineOnlyNewConflictingInvitations"
+              : "declineNone",
+            declineMessage:
+              "Declined because this time is protected for focused work.",
           },
-        });
+        },
+      });
     await db.approvalRequest.update({
       where: { id: approval.id },
       data: { status: "EXECUTED", executedAt: new Date() },
@@ -341,6 +511,8 @@ const worker = new Worker<QueueJob>(
         return { skipped: "Automatic email analysis is disabled" };
       return analyze(payload.userId, payload.emailId);
     }
+    if (payload.name === "email.draft")
+      return draftReply(payload.userId, payload.emailId, payload.tone);
     return execute(payload.userId, payload.approvalId);
   },
   { connection, concurrency: 2, lockDuration: 120000 },
@@ -353,7 +525,45 @@ worker.on("error", (error) =>
     `[Chief worker] Queue connection unavailable: ${error.message}`,
   ),
 );
+const renewGmailWatches = async () => {
+  const topic = process.env.GMAIL_PUBSUB_TOPIC;
+  if (!topic) return;
+  const expiring = await db.gmailWatch.findMany({
+    where: {
+      status: "ACTIVE",
+      expiresAt: { lte: new Date(Date.now() + 86400000) },
+    },
+  });
+  for (const watch of expiring) {
+    try {
+      const metadata = await startGmailWatch(
+        await authFor(watch.userId),
+        topic,
+      );
+      await db.gmailWatch.update({ where: { id: watch.id }, data: metadata });
+    } catch (error) {
+      await db.gmailWatch.update({
+        where: { id: watch.id },
+        data: { status: "RECONNECT_REQUIRED" },
+      });
+      console.error(
+        {
+          userId: watch.userId,
+          error:
+            error instanceof Error ? error.message : "Watch renewal failed",
+        },
+        "Gmail watch renewal failed",
+      );
+    }
+  }
+};
+const watchRenewal = setInterval(
+  () => void renewGmailWatches(),
+  12 * 60 * 60 * 1000,
+);
+watchRenewal.unref();
 const shutdown = async () => {
+  clearInterval(watchRenewal);
   await worker.close();
   await connection.quit();
   await db.$disconnect();
