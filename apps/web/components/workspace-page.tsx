@@ -554,7 +554,7 @@ function MatrixView({ tasks, columns, move }: { tasks: Task[]; columns: readonly
 }
 function Calendar({ data }: { data: CalendarEvent[] }) {
   return (
-    <section className="card">
+    <><FocusPlanner /><section className="card">
       {data.length ? (
         <div className="list">
           {data.map((event) => (
@@ -579,9 +579,10 @@ function Calendar({ data }: { data: CalendarEvent[] }) {
           detail="Calendar events will appear after Google synchronization."
         />
       )}
-    </section>
+    </section></>
   );
 }
+function FocusPlanner(){const[suggestions,setSuggestions]=useState<Array<{start:string;end:string;score:number}>>([]),[loading,setLoading]=useState(true),[pending,setPending]=useState<string|null>(null),[message,setMessage]=useState<string|null>(null);useEffect(()=>{fetch("/api/calendar/focus").then(response=>response.ok?response.json():[]).then(setSuggestions).finally(()=>setLoading(false))},[]);const propose=async(slot:{start:string;end:string})=>{setPending(slot.start);const response=await fetch("/api/calendar/focus",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({title:"Focus time",start:slot.start,end:slot.end,autoDecline:false})});setPending(null);setMessage(response.ok?"Focus block sent to Approvals.":"Focus block could not be proposed.")};return <section className="focus-planner card"><div className="section-head"><div><div className="eyebrow">Schedule defense</div><h2>Protect deep work</h2><span className="subtle">Open 90-minute windows calculated from your live calendar.</span></div><ShieldCheck size={18}/></div>{loading?<div className="mini-empty"><LoaderCircle className="spin"/></div>:suggestions.length?<div className="focus-suggestions">{suggestions.map(slot=><button className="focus-slot" onClick={()=>void propose(slot)} disabled={pending===slot.start} key={slot.start}><div className="focus-score"><strong>{slot.score}</strong><span>quality</span></div><div><strong>{new Intl.DateTimeFormat(undefined,{weekday:"short",month:"short",day:"numeric"}).format(new Date(slot.start))}</strong><span>{new Intl.DateTimeFormat(undefined,{hour:"numeric",minute:"2-digit"}).format(new Date(slot.start))}–{new Intl.DateTimeFormat(undefined,{hour:"numeric",minute:"2-digit"}).format(new Date(slot.end))}</span></div>{pending===slot.start?<LoaderCircle className="spin" size={16}/>:<ArrowUpRight size={16}/>}</button>)}</div>:<div className="mini-empty">No 90-minute focus windows are available in the next week.</div>}{message&&<p className="subtle">{message}</p>}</section>}
 function Approvals({ data }: { data: Approval[] }) {
   return (
     <section className="card">

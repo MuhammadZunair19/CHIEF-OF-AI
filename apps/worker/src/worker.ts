@@ -293,7 +293,7 @@ async function execute(userId: string, approvalId: string) {
           userId: "me",
           requestBody: { raw, threadId: payload.gmailThreadId },
         });
-    } else
+    } else if (payload.kind === "CREATE_EVENT")
       await google
         .calendar({ version: "v3", auth })
         .events.insert({
@@ -306,6 +306,21 @@ async function execute(userId: string, approvalId: string) {
             attendees: payload.attendees.map((email) => ({ email })),
           },
         });
+    else
+      await google.calendar({ version: "v3", auth }).events.insert({
+        calendarId: "primary",
+        requestBody: {
+          summary: payload.title,
+          eventType: "focusTime",
+          transparency: "opaque",
+          start: { dateTime: payload.start },
+          end: { dateTime: payload.end },
+          focusTimeProperties: {
+            autoDeclineMode: payload.autoDecline ? "declineOnlyNewConflictingInvitations" : "declineNone",
+            declineMessage: "Declined because this time is protected for focused work.",
+          },
+        },
+      });
     await db.approvalRequest.update({
       where: { id: approval.id },
       data: { status: "EXECUTED", executedAt: new Date() },

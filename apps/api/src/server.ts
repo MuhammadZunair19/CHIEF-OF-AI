@@ -286,6 +286,34 @@ app.get("/api/calendar", async (req, reply) => {
     take: 100,
   });
 });
+app.get("/api/calendar/focus", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const settings = await db.userSettings.upsert({ where: { userId: user.id }, update: {}, create: { userId: user.id } }),
+    rangeStart = new Date(), rangeEnd = new Date(Date.now() + 7 * 86400000),
+    events = await db.calendarEvent.findMany({ where: { userId: user.id, startAt: { lt: rangeEnd }, endAt: { gt: rangeStart } }, orderBy: { startAt: "asc" } }),
+    duration = 90 * 60000, suggestions: Array<{ start: string; end: string; score: number }> = [];
+  for (let day = 0; day < 7 && suggestions.length < 4; day++) {
+    const start = new Date(rangeStart); start.setDate(rangeStart.getDate() + day); start.setHours(settings.workingHourStart, 0, 0, 0);
+    const end = new Date(start); end.setHours(settings.workingHourEnd, 0, 0, 0);
+    if ([0, 6].includes(start.getDay())) continue;
+    let cursor = new Date(Math.max(start.getTime(), rangeStart.getTime()));
+    for (const event of events.filter((item) => item.endAt > start && item.startAt < end)) {
+      if (event.startAt.getTime() - cursor.getTime() >= duration) break;
+      if (event.endAt > cursor) cursor = new Date(event.endAt.getTime() + settings.meetingBuffer * 60000);
+    }
+    if (end.getTime() - cursor.getTime() >= duration) suggestions.push({ start: cursor.toISOString(), end: new Date(cursor.getTime() + duration).toISOString(), score: Math.max(60, 100 - events.filter((item) => item.startAt >= start && item.startAt < end).length * 8) });
+  }
+  return suggestions;
+});
+app.post("/api/calendar/focus", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const body = z.object({ title: z.string().trim().min(1).max(120).default("Focus time"), start: z.iso.datetime(), end: z.iso.datetime(), autoDecline: z.boolean().default(false) }).refine((value) => new Date(value.end) > new Date(value.start), { message: "Focus time must end after it starts" }).parse(req.body);
+  const approval = await db.approvalRequest.create({ data: { userId: user.id, type: "CREATE_FOCUS_TIME", reason: "Protect an uninterrupted deep-work block", riskLevel: "MEDIUM", payload: { kind: "CREATE_FOCUS_TIME", ...body }, status: "PENDING" } });
+  reply.code(201);
+  return approval;
+});
 app.patch("/api/tasks/:id", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;

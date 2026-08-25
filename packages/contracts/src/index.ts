@@ -39,6 +39,13 @@ export const ApprovalPayloadSchema = z.discriminatedUnion("kind", [
     end: z.iso.datetime(),
     attendees: z.array(z.string().email()).default([]),
   }),
+  z.object({
+    kind: z.literal("CREATE_FOCUS_TIME"),
+    title: z.string().min(1),
+    start: z.iso.datetime(),
+    end: z.iso.datetime(),
+    autoDecline: z.boolean().default(false),
+  }),
 ]);
 export type ApprovalPayload = z.infer<typeof ApprovalPayloadSchema>;
 export const QueueJobSchema = z.discriminatedUnion("name", [
