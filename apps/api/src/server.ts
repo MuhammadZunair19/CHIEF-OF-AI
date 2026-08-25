@@ -304,6 +304,28 @@ app.post("/api/tasks", async (req, reply) => {
   reply.code(201);
   return task;
 });
+app.get("/api/sprints", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  return db.sprint.findMany({ where: { userId: user.id }, orderBy: { startAt: "desc" }, include: { tasks: { orderBy: [{ priority: "desc" }, { createdAt: "desc" }] } } });
+});
+app.post("/api/sprints", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const body = z.object({ name: z.string().trim().min(1).max(120), goal: z.string().trim().max(500).optional(), startAt: z.iso.datetime(), endAt: z.iso.datetime(), wipLimit: z.number().int().min(1).max(20).default(3) }).refine((value) => new Date(value.endAt) > new Date(value.startAt), { message: "Sprint must end after it starts" }).parse(req.body);
+  const sprint = await db.sprint.create({ data: { userId: user.id, ...body, startAt: new Date(body.startAt), endAt: new Date(body.endAt), status: "ACTIVE" } });
+  reply.code(201);
+  return sprint;
+});
+app.patch("/api/sprints/:id", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const id = (req.params as { id: string }).id,
+    body = z.object({ name: z.string().trim().min(1).max(120).optional(), goal: z.string().trim().max(500).nullable().optional(), status: z.enum(["PLANNED", "ACTIVE", "COMPLETED", "ARCHIVED"]).optional(), wipLimit: z.number().int().min(1).max(20).optional(), review: z.string().max(5000).nullable().optional(), retrospective: z.string().max(5000).nullable().optional() }).parse(req.body),
+    sprint = await db.sprint.findFirst({ where: { id, userId: user.id } });
+  if (!sprint) return reply.code(404).send({ error: "Sprint not found" });
+  return db.sprint.update({ where: { id }, data: body });
+});
 app.get("/api/follow-ups", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
@@ -378,8 +400,17 @@ app.patch("/api/tasks/:id", async (req, reply) => {
         .optional(),
       priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
       dueAt: z.iso.datetime().nullable().optional(),
+      sprintId: z.string().nullable().optional(),
+      estimate: z.number().int().min(1).max(100).nullable().optional(),
+      assignee: z.string().trim().max(120).nullable().optional(),
+      project: z.string().trim().max(120).nullable().optional(),
+      blockedReason: z.string().trim().max(500).nullable().optional(),
     })
     .parse(req.body);
+  if (body.sprintId) {
+    const sprint = await db.sprint.findFirst({ where: { id: body.sprintId, userId: user.id } });
+    if (!sprint) return reply.code(400).send({ error: "Sprint does not belong to this workspace" });
+  }
   return db.task.update({
     where: { id: (req.params as { id: string }).id, userId: user.id },
     data: {

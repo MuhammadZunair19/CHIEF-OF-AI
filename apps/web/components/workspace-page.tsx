@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { ScrumWorkspace } from "@/components/scrum-workspace";
 import {
   Activity,
   Archive,
@@ -549,7 +550,7 @@ function Tasks({ data }: { data: Task[] }) {
         })}
       </div>}
       {view === "list" && <div className="card task-list-view">{tasks.map((task) => <TaskCard key={task.id} task={task} columns={columns} move={move} compact />)}{!tasks.length && <Empty Icon={ListTodo} title="No tasks yet" detail="Tasks created from selected emails will appear here." />}</div>}
-      {view === "sprint" && <SprintView tasks={tasks} columns={columns} move={move} />}
+      {view === "sprint" && <ScrumWorkspace overview={<SprintView tasks={tasks} columns={columns} move={move} />} />}
       {view === "matrix" && <MatrixView tasks={tasks} columns={columns} move={move} />}
     </>
   );

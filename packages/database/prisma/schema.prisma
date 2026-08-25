@@ -67,6 +67,7 @@ model User {
   briefs DailyBrief[]
   followUpPreferences FollowUpPreference[]
   gmailWatch GmailWatch?
+  sprints Sprint[]
 }
 model Session {
   id String @id @default(cuid())
@@ -194,13 +195,37 @@ model Task {
   status TaskStatus @default(TODO)
   dueAt DateTime?
   labels String[]
+  sprintId String?
+  estimate Int?
+  assignee String?
+  project String?
+  blockedReason String?
   source String @default("USER")
   createdByAi Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   email Email? @relation(fields: [emailId], references: [id], onDelete: SetNull)
+  sprint Sprint? @relation(fields: [sprintId], references: [id], onDelete: SetNull)
   @@index([userId, status])
+  @@index([sprintId, status])
+}
+model Sprint {
+  id String @id @default(cuid())
+  userId String
+  name String
+  goal String?
+  status String @default("PLANNED")
+  startAt DateTime
+  endAt DateTime
+  wipLimit Int @default(3)
+  review String?
+  retrospective String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks Task[]
+  @@index([userId, status, startAt])
 }
 model CalendarEvent {
   id String @id @default(cuid())
