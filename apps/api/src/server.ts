@@ -200,6 +200,32 @@ app.get("/api/tasks", async (req, reply) => {
     orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
   });
 });
+app.get("/api/follow-ups", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const now = new Date(), twoDaysAgo = new Date(now.getTime() - 2 * 86400000), oneDayAgo = new Date(now.getTime() - 86400000);
+  const [tasks, emails, approvals, preferences] = await Promise.all([
+    db.task.findMany({ where: { userId: user.id, status: { notIn: ["DONE", "ARCHIVED"] }, dueAt: { lt: now } }, orderBy: { dueAt: "asc" }, take: 25 }),
+    db.email.findMany({ where: { userId: user.id, receivedAt: { lt: twoDaysAgo }, analysisRecord: { requiresAction: true }, drafts: { none: {} } }, include: { analysisRecord: true }, orderBy: { receivedAt: "asc" }, take: 25 }),
+    db.approvalRequest.findMany({ where: { userId: user.id, status: "PENDING", requestedAt: { lt: oneDayAgo } }, include: { draft: true }, orderBy: { requestedAt: "asc" }, take: 25 }),
+    db.followUpPreference.findMany({ where: { userId: user.id } }),
+  ]);
+  const signals = [
+    ...tasks.map((task) => ({ key: `task:${task.id}`, kind: "OVERDUE_TASK", title: task.title, detail: `Due ${task.dueAt?.toISOString() ?? "earlier"}`, href: "/tasks", occurredAt: task.dueAt?.toISOString() ?? task.updatedAt.toISOString(), urgency: task.priority })),
+    ...emails.map((email) => ({ key: `email:${email.id}`, kind: "AWAITING_REPLY", title: email.subject, detail: `${email.sender} · ${email.analysisRecord?.summary ?? email.preview}`, href: `/inbox/${email.id}`, occurredAt: email.receivedAt.toISOString(), urgency: email.analysisRecord?.priority ?? "MEDIUM" })),
+    ...approvals.map((approval) => ({ key: `approval:${approval.id}`, kind: "STALE_APPROVAL", title: approval.draft?.subject ?? approval.type.replaceAll("_", " "), detail: approval.reason, href: `/approvals/${approval.id}`, occurredAt: approval.requestedAt.toISOString(), urgency: approval.riskLevel })),
+  ];
+  const preference = new Map(preferences.map((item) => [item.signalKey, item]));
+  return signals.filter((signal) => { const item = preference.get(signal.key); return !item?.dismissedAt && (!item?.snoozedUntil || item.snoozedUntil <= now); });
+});
+app.post("/api/follow-ups/action", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const body = z.object({ signalKey: z.string().min(3).max(200), action: z.enum(["SNOOZE", "DISMISS"]), days: z.number().int().min(1).max(90).optional() }).parse(req.body);
+  const data = body.action === "DISMISS" ? { dismissedAt: new Date(), snoozedUntil: null } : { dismissedAt: null, snoozedUntil: new Date(Date.now() + (body.days ?? 1) * 86400000) };
+  await db.followUpPreference.upsert({ where: { userId_signalKey: { userId: user.id, signalKey: body.signalKey } }, update: data, create: { userId: user.id, signalKey: body.signalKey, ...data } });
+  reply.code(204);
+});
 app.get("/api/calendar", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;

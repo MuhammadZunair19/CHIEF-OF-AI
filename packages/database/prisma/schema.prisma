@@ -65,6 +65,7 @@ model User {
   runs AgentRun[]
   settings UserSettings?
   briefs DailyBrief[]
+  followUpPreferences FollowUpPreference[]
 }
 model Session {
   id String @id @default(cuid())
@@ -301,4 +302,16 @@ model EventRecord {
   data Json?
   createdAt DateTime @default(now())
   @@index([userId, createdAt])
+}
+model FollowUpPreference {
+  id String @id @default(cuid())
+  userId String
+  signalKey String
+  snoozedUntil DateTime?
+  dismissedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, signalKey])
+  @@index([userId, snoozedUntil])
 }
