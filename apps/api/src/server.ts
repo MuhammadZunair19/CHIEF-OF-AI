@@ -7,7 +7,11 @@ import { db } from "@chief/database";
 import { enqueue, connection, agentQueue } from "@chief/queue";
 import { integrationState, loadEnv } from "@chief/config";
 import { z } from "zod";
-import { googleClient, startGmailWatch, verifyGooglePushToken } from "@chief/google";
+import {
+  googleClient,
+  startGmailWatch,
+  verifyGooglePushToken,
+} from "@chief/google";
 const env = loadEnv(),
   app = Fastify({
     logger: { level: env.NODE_ENV === "production" ? "info" : "debug" },
@@ -49,13 +53,50 @@ const requireUser = async (
   return session.user;
 };
 const googleAuthFor = async (userId: string) => {
-  const account = await db.account.findFirst({ where: { userId, providerId: "google" } });
+  const account = await db.account.findFirst({
+    where: { userId, providerId: "google" },
+  });
   if (!account) throw new Error("Google account is not connected");
-  return googleClient({ ...(account.accessToken ? { accessToken: account.accessToken } : {}), ...(account.refreshToken ? { refreshToken: account.refreshToken } : {}) });
+  return googleClient({
+    ...(account.accessToken ? { accessToken: account.accessToken } : {}),
+    ...(account.refreshToken ? { refreshToken: account.refreshToken } : {}),
+  });
 };
-const addressFromSender = (value: string) => (value.match(/<\s*([^<>]+)\s*>/)?.[1] ?? value).trim().toLowerCase();
-const nameFromSender = (value: string) => value.match(/^\s*"?([^"<]+?)"?\s*</)?.[1]?.trim() ?? null;
-const topicsFromSubjects = (subjects: string[]) => { const ignored = new Set(["about","after","before","from","have","hello","meeting","please","regarding","thanks","that","the","this","with","your"]); const counts = new Map<string,number>(); for(const subject of subjects) for(const word of subject.toLowerCase().replace(/[^a-z0-9\s-]/g," ").split(/\s+/)) if(word.length>3&&!ignored.has(word)) counts.set(word,(counts.get(word)??0)+1); return [...counts].sort((a,b)=>b[1]-a[1]).slice(0,10).map(([word])=>word); };
+const addressFromSender = (value: string) =>
+  (value.match(/<\s*([^<>]+)\s*>/)?.[1] ?? value).trim().toLowerCase();
+const nameFromSender = (value: string) =>
+  value.match(/^\s*"?([^"<]+?)"?\s*</)?.[1]?.trim() ?? null;
+const topicsFromSubjects = (subjects: string[]) => {
+  const ignored = new Set([
+    "about",
+    "after",
+    "before",
+    "from",
+    "have",
+    "hello",
+    "meeting",
+    "please",
+    "regarding",
+    "thanks",
+    "that",
+    "the",
+    "this",
+    "with",
+    "your",
+  ]);
+  const counts = new Map<string, number>();
+  for (const subject of subjects)
+    for (const word of subject
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, " ")
+      .split(/\s+/))
+      if (word.length > 3 && !ignored.has(word))
+        counts.set(word, (counts.get(word) ?? 0) + 1);
+  return [...counts]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([word]) => word);
+};
 app.get("/health", async () => ({ status: "ok" }));
 app.get("/ready", async (_req, reply) => {
   try {
@@ -101,7 +142,23 @@ app.get("/api/dashboard", async (req, reply) => {
   const now = new Date(),
     dayEnd = new Date(now);
   dayEnd.setHours(23, 59, 59, 999);
-  const [pending, tasksDue, attention, meetings, recent, overdue, todayMeetings, priorityEmails] = await Promise.all([
+  const weekAgo = new Date(now.getTime() - 7 * 86400000),
+    weekAhead = new Date(now.getTime() + 7 * 86400000);
+  const [
+    pending,
+    tasksDue,
+    attention,
+    meetings,
+    recent,
+    overdue,
+    todayMeetings,
+    priorityEmails,
+    weekEvents,
+    completedThisWeek,
+    handledThisWeek,
+    runsThisWeek,
+    nextTask,
+  ] = await Promise.all([
     db.approvalRequest.count({ where: { userId: user.id, status: "PENDING" } }),
     db.task.count({
       where: {
@@ -130,7 +187,11 @@ app.get("/api/dashboard", async (req, reply) => {
       include: { steps: { take: 1, orderBy: { startedAt: "desc" } } },
     }),
     db.task.findMany({
-      where: { userId: user.id, status: { notIn: ["DONE", "ARCHIVED"] }, dueAt: { lt: now } },
+      where: {
+        userId: user.id,
+        status: { notIn: ["DONE", "ARCHIVED"] },
+        dueAt: { lt: now },
+      },
       orderBy: [{ priority: "desc" }, { dueAt: "asc" }],
       take: 4,
     }),
@@ -140,26 +201,110 @@ app.get("/api/dashboard", async (req, reply) => {
       take: 6,
     }),
     db.email.findMany({
-      where: { userId: user.id, unread: true, analysisRecord: { requiresAction: true } },
+      where: {
+        userId: user.id,
+        unread: true,
+        analysisRecord: { requiresAction: true },
+      },
       include: { analysisRecord: true },
       orderBy: { receivedAt: "desc" },
       take: 4,
     }),
+    db.calendarEvent.findMany({
+      where: { userId: user.id, startAt: { gte: weekAgo, lte: weekAhead } },
+      select: { startAt: true, endAt: true },
+      orderBy: { startAt: "asc" },
+    }),
+    db.task.count({
+      where: { userId: user.id, status: "DONE", updatedAt: { gte: weekAgo } },
+    }),
+    db.email.count({ where: { userId: user.id, handledAt: { gte: weekAgo } } }),
+    db.agentRun.count({
+      where: {
+        userId: user.id,
+        status: "COMPLETED",
+        finishedAt: { gte: weekAgo },
+      },
+    }),
+    db.task.findFirst({
+      where: { userId: user.id, status: { notIn: ["DONE", "ARCHIVED"] } },
+      orderBy: [{ priority: "desc" }, { dueAt: "asc" }],
+    }),
   ]);
-  const meetingMinutes = todayMeetings.reduce((sum, event) => sum + Math.max(0, (event.endAt.getTime() - event.startAt.getTime()) / 60000), 0),
+  const meetingMinutes = todayMeetings.reduce(
+      (sum, event) =>
+        sum +
+        Math.max(0, (event.endAt.getTime() - event.startAt.getTime()) / 60000),
+      0,
+    ),
     focusMinutes = Math.max(0, 480 - meetingMinutes),
-    dayScore = Math.max(0, Math.min(100, 100 - overdue.length * 12 - pending * 6 - Math.max(0, meetings - 5) * 4));
+    dayScore = Math.max(
+      0,
+      Math.min(
+        100,
+        100 - overdue.length * 12 - pending * 6 - Math.max(0, meetings - 5) * 4,
+      ),
+    ),
+    calendarLoad = Array.from({ length: 14 }, (_, offset) => {
+      const date = new Date(weekAgo);
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() + offset);
+      const next = new Date(date.getTime() + 86400000),
+        minutes = weekEvents
+          .filter((event) => event.startAt >= date && event.startAt < next)
+          .reduce(
+            (sum, event) =>
+              sum +
+              Math.max(
+                0,
+                (event.endAt.getTime() - event.startAt.getTime()) / 60000,
+              ),
+            0,
+          );
+      return { date: date.toISOString(), minutes: Math.round(minutes) };
+    }),
+    totalMeetingMinutes = weekEvents
+      .filter((event) => event.startAt >= weekAgo && event.startAt <= now)
+      .reduce(
+        (sum, event) =>
+          sum +
+          Math.max(
+            0,
+            (event.endAt.getTime() - event.startAt.getTime()) / 60000,
+          ),
+        0,
+      );
   return {
     metrics: { pending, tasksDue, attention, meetings },
     recent,
-    command: { overdue, meetings: todayMeetings, priorityEmails, focusMinutes: Math.round(focusMinutes), dayScore },
+    command: {
+      overdue,
+      meetings: todayMeetings,
+      priorityEmails,
+      focusMinutes: Math.round(focusMinutes),
+      dayScore,
+    },
+    weekly: {
+      completedTasks: completedThisWeek,
+      handledEmails: handledThisWeek,
+      agentRuns: runsThisWeek,
+      meetingMinutes: Math.round(totalMeetingMinutes),
+    },
+    calendarLoad,
+    nextCommitment: nextTask
+      ? { id: nextTask.id, title: nextTask.title, dueAt: nextTask.dueAt }
+      : null,
   };
 });
 app.get("/api/inbox", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   return db.email.findMany({
-    where: { userId: user.id, triageStatus: "INBOX", OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: new Date() } }] },
+    where: {
+      userId: user.id,
+      triageStatus: "INBOX",
+      OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: new Date() } }],
+    },
     orderBy: { receivedAt: "desc" },
     take: 50,
     include: { analysisRecord: true, drafts: true },
@@ -168,20 +313,55 @@ app.get("/api/inbox", async (req, reply) => {
 app.patch("/api/inbox/triage", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const body = z.object({ ids: z.array(z.string()).min(1).max(50), action: z.enum(["SNOOZE", "HANDLE", "RESTORE"]), days: z.number().int().min(1).max(90).optional() }).parse(req.body),
-    data = body.action === "HANDLE" ? { triageStatus: "HANDLED", handledAt: new Date(), snoozedUntil: null } : body.action === "RESTORE" ? { triageStatus: "INBOX", handledAt: null, snoozedUntil: null } : { triageStatus: "INBOX", handledAt: null, snoozedUntil: new Date(Date.now() + (body.days ?? 1) * 86400000) };
-  const result = await db.email.updateMany({ where: { userId: user.id, id: { in: body.ids } }, data });
+  const body = z
+      .object({
+        ids: z.array(z.string()).min(1).max(50),
+        action: z.enum(["SNOOZE", "HANDLE", "RESTORE"]),
+        days: z.number().int().min(1).max(90).optional(),
+      })
+      .parse(req.body),
+    data =
+      body.action === "HANDLE"
+        ? { triageStatus: "HANDLED", handledAt: new Date(), snoozedUntil: null }
+        : body.action === "RESTORE"
+          ? { triageStatus: "INBOX", handledAt: null, snoozedUntil: null }
+          : {
+              triageStatus: "INBOX",
+              handledAt: null,
+              snoozedUntil: new Date(Date.now() + (body.days ?? 1) * 86400000),
+            };
+  const result = await db.email.updateMany({
+    where: { userId: user.id, id: { in: body.ids } },
+    data,
+  });
   return { updated: result.count };
 });
 app.post("/api/inbox/:id/task", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   const id = (req.params as { id: string }).id,
-    email = await db.email.findFirst({ where: { id, userId: user.id }, include: { analysisRecord: true } });
+    email = await db.email.findFirst({
+      where: { id, userId: user.id },
+      include: { analysisRecord: true },
+    });
   if (!email) return reply.code(404).send({ error: "Email not found" });
-  const existing = await db.task.findFirst({ where: { userId: user.id, emailId: id, status: { not: "ARCHIVED" } } });
-  if (existing) return reply.code(409).send({ error: "A task already exists for this email" });
-  const task = await db.task.create({ data: { userId: user.id, emailId: id, title: email.subject, priority: email.analysisRecord?.priority ?? "MEDIUM", source: "EMAIL", createdByAi: false } });
+  const existing = await db.task.findFirst({
+    where: { userId: user.id, emailId: id, status: { not: "ARCHIVED" } },
+  });
+  if (existing)
+    return reply
+      .code(409)
+      .send({ error: "A task already exists for this email" });
+  const task = await db.task.create({
+    data: {
+      userId: user.id,
+      emailId: id,
+      title: email.subject,
+      priority: email.analysisRecord?.priority ?? "MEDIUM",
+      source: "EMAIL",
+      createdByAi: false,
+    },
+  });
   reply.code(201);
   return task;
 });
@@ -189,11 +369,18 @@ app.post("/api/inbox/:id/draft", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   const id = (req.params as { id: string }).id,
-    body = z.object({ tone: z.enum(["friendly", "formal", "direct", "concise", "detailed"]) }).parse(req.body),
+    body = z
+      .object({
+        tone: z.enum(["friendly", "formal", "direct", "concise", "detailed"]),
+      })
+      .parse(req.body),
     email = await db.email.findFirst({ where: { id, userId: user.id } });
   if (!email) return reply.code(404).send({ error: "Email not found" });
   const minute = new Date().toISOString().slice(0, 16).replaceAll(":", "-");
-  await enqueue({ name: "email.draft", userId: user.id, emailId: id, tone: body.tone }, `draft-${id}-${body.tone}-${minute}`);
+  await enqueue(
+    { name: "email.draft", userId: user.id, emailId: id, tone: body.tone },
+    `draft-${id}-${body.tone}-${minute}`,
+  );
   reply.code(202);
   return { status: "queued" };
 });
@@ -201,20 +388,56 @@ app.patch("/api/drafts/:id", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   const id = (req.params as { id: string }).id,
-    body = z.object({ body: z.string().min(1).max(20000), subject: z.string().min(1).max(500), recipients: z.array(z.string().email()).min(1).max(20) }).parse(req.body),
-    draft = await db.emailDraft.findFirst({ where: { id, email: { userId: user.id } } });
+    body = z
+      .object({
+        body: z.string().min(1).max(20000),
+        subject: z.string().min(1).max(500),
+        recipients: z.array(z.string().email()).min(1).max(20),
+      })
+      .parse(req.body),
+    draft = await db.emailDraft.findFirst({
+      where: { id, email: { userId: user.id } },
+    });
   if (!draft) return reply.code(404).send({ error: "Draft not found" });
-  return db.emailDraft.update({ where: { id }, data: { ...body, status: "EDITED" } });
+  return db.emailDraft.update({
+    where: { id },
+    data: { ...body, status: "EDITED" },
+  });
 });
 app.post("/api/drafts/:id/approval", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   const id = (req.params as { id: string }).id,
-    draft = await db.emailDraft.findFirst({ where: { id, email: { userId: user.id } }, include: { email: true, approvals: { where: { status: "PENDING" } } } });
+    draft = await db.emailDraft.findFirst({
+      where: { id, email: { userId: user.id } },
+      include: { email: true, approvals: { where: { status: "PENDING" } } },
+    });
   if (!draft) return reply.code(404).send({ error: "Draft not found" });
-  if (draft.approvals.length) return reply.code(409).send({ error: "Draft is already awaiting approval" });
-  const approval = await db.approvalRequest.create({ data: { userId: user.id, draftId: id, type: "SEND_EMAIL", reason: "Send the reviewed reply from Reply Studio", riskLevel: "HIGH", payload: { kind: "SEND_EMAIL", to: draft.recipients, subject: draft.subject, body: draft.body, gmailThreadId: draft.email.gmailThreadId }, status: "PENDING" } });
-  await db.emailDraft.update({ where: { id }, data: { status: "PENDING_APPROVAL" } });
+  if (draft.approvals.length)
+    return reply
+      .code(409)
+      .send({ error: "Draft is already awaiting approval" });
+  const approval = await db.approvalRequest.create({
+    data: {
+      userId: user.id,
+      draftId: id,
+      type: "SEND_EMAIL",
+      reason: "Send the reviewed reply from Reply Studio",
+      riskLevel: "HIGH",
+      payload: {
+        kind: "SEND_EMAIL",
+        to: draft.recipients,
+        subject: draft.subject,
+        body: draft.body,
+        gmailThreadId: draft.email.gmailThreadId,
+      },
+      status: "PENDING",
+    },
+  });
+  await db.emailDraft.update({
+    where: { id },
+    data: { status: "PENDING_APPROVAL" },
+  });
   reply.code(201);
   return approval;
 });
@@ -223,7 +446,11 @@ app.get("/api/inbox/:id", async (req, reply) => {
   if (!user) return;
   return db.email.findFirst({
     where: { id: (req.params as { id: string }).id, userId: user.id },
-    include: { analysisRecord: true, drafts: { orderBy: { createdAt: "desc" } }, tasks: true },
+    include: {
+      analysisRecord: true,
+      drafts: { orderBy: { createdAt: "desc" } },
+      tasks: true,
+    },
   });
 });
 app.post("/api/inbox/:id/analyze", async (req, reply) => {
@@ -258,37 +485,88 @@ app.get("/api/gmail/watch", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   const watch = await db.gmailWatch.findUnique({ where: { userId: user.id } });
-  return { configured: integrationState(env).gmailPush, active: Boolean(watch && watch.status === "ACTIVE" && watch.expiresAt > new Date()), expiresAt: watch?.expiresAt ?? null, lastNotificationAt: watch?.lastNotificationAt ?? null };
+  return {
+    configured: integrationState(env).gmailPush,
+    active: Boolean(
+      watch && watch.status === "ACTIVE" && watch.expiresAt > new Date(),
+    ),
+    expiresAt: watch?.expiresAt ?? null,
+    lastNotificationAt: watch?.lastNotificationAt ?? null,
+  };
 });
 app.post("/api/gmail/watch", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   if (!env.GMAIL_PUBSUB_TOPIC || !integrationState(env).gmailPush)
-    return reply.code(503).send({ error: "Gmail push synchronization is not configured" });
-  const metadata = await startGmailWatch(await googleAuthFor(user.id), env.GMAIL_PUBSUB_TOPIC);
-  const watch = await db.gmailWatch.upsert({ where: { userId: user.id }, update: { ...metadata, status: "ACTIVE" }, create: { userId: user.id, ...metadata } });
+    return reply
+      .code(503)
+      .send({ error: "Gmail push synchronization is not configured" });
+  const metadata = await startGmailWatch(
+    await googleAuthFor(user.id),
+    env.GMAIL_PUBSUB_TOPIC,
+  );
+  const watch = await db.gmailWatch.upsert({
+    where: { userId: user.id },
+    update: { ...metadata, status: "ACTIVE" },
+    create: { userId: user.id, ...metadata },
+  });
   reply.code(201);
   return watch;
 });
 app.post("/api/google/gmail/push", async (req, reply) => {
   if (!env.GMAIL_PUSH_AUDIENCE || !env.GMAIL_PUSH_SERVICE_ACCOUNT)
-    return reply.code(503).send({ error: "Push verification is not configured" });
+    return reply
+      .code(503)
+      .send({ error: "Push verification is not configured" });
   const authorization = req.headers.authorization,
-    token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+    token = authorization?.startsWith("Bearer ")
+      ? authorization.slice(7)
+      : null;
   if (!token) return reply.code(401).send({ error: "Missing push identity" });
   try {
-    const identity = await verifyGooglePushToken(token, env.GMAIL_PUSH_AUDIENCE);
-    if (!identity?.email_verified || identity.email !== env.GMAIL_PUSH_SERVICE_ACCOUNT)
+    const identity = await verifyGooglePushToken(
+      token,
+      env.GMAIL_PUSH_AUDIENCE,
+    );
+    if (
+      !identity?.email_verified ||
+      identity.email !== env.GMAIL_PUSH_SERVICE_ACCOUNT
+    )
       return reply.code(403).send({ error: "Invalid push identity" });
   } catch {
     return reply.code(401).send({ error: "Invalid push identity" });
   }
-  const envelope = z.object({ message: z.object({ data: z.string(), messageId: z.string().optional() }) }).parse(req.body),
-    notification = z.object({ emailAddress: z.string().email(), historyId: z.string() }).parse(JSON.parse(Buffer.from(envelope.message.data, "base64").toString("utf8"))),
-    user = await db.user.findUnique({ where: { email: notification.emailAddress } });
+  const envelope = z
+      .object({
+        message: z.object({
+          data: z.string(),
+          messageId: z.string().optional(),
+        }),
+      })
+      .parse(req.body),
+    notification = z
+      .object({ emailAddress: z.string().email(), historyId: z.string() })
+      .parse(
+        JSON.parse(
+          Buffer.from(envelope.message.data, "base64").toString("utf8"),
+        ),
+      ),
+    user = await db.user.findUnique({
+      where: { email: notification.emailAddress },
+    });
   if (!user) return reply.code(204).send();
-  await db.gmailWatch.updateMany({ where: { userId: user.id }, data: { historyId: notification.historyId, lastNotificationAt: new Date(), status: "ACTIVE" } });
-  await enqueue({ name: "gmail.sync", userId: user.id }, `gmail-push-${user.id}-${notification.historyId}`);
+  await db.gmailWatch.updateMany({
+    where: { userId: user.id },
+    data: {
+      historyId: notification.historyId,
+      lastNotificationAt: new Date(),
+      status: "ACTIVE",
+    },
+  });
+  await enqueue(
+    { name: "gmail.sync", userId: user.id },
+    `gmail-push-${user.id}-${notification.historyId}`,
+  );
   return { status: "queued" };
 });
 app.get("/api/tasks", async (req, reply) => {
@@ -302,21 +580,61 @@ app.get("/api/tasks", async (req, reply) => {
 app.post("/api/tasks", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const body = z.object({ title: z.string().trim().min(1).max(240), priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).default("MEDIUM"), dueAt: z.iso.datetime().optional() }).parse(req.body);
-  const task = await db.task.create({ data: { userId: user.id, title: body.title, priority: body.priority, dueAt: body.dueAt ? new Date(body.dueAt) : null, source: "USER", createdByAi: false } });
+  const body = z
+    .object({
+      title: z.string().trim().min(1).max(240),
+      priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).default("MEDIUM"),
+      dueAt: z.iso.datetime().optional(),
+    })
+    .parse(req.body);
+  const task = await db.task.create({
+    data: {
+      userId: user.id,
+      title: body.title,
+      priority: body.priority,
+      dueAt: body.dueAt ? new Date(body.dueAt) : null,
+      source: "USER",
+      createdByAi: false,
+    },
+  });
   reply.code(201);
   return task;
 });
 app.get("/api/sprints", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  return db.sprint.findMany({ where: { userId: user.id }, orderBy: { startAt: "desc" }, include: { tasks: { orderBy: [{ priority: "desc" }, { createdAt: "desc" }] } } });
+  return db.sprint.findMany({
+    where: { userId: user.id },
+    orderBy: { startAt: "desc" },
+    include: {
+      tasks: { orderBy: [{ priority: "desc" }, { createdAt: "desc" }] },
+    },
+  });
 });
 app.post("/api/sprints", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const body = z.object({ name: z.string().trim().min(1).max(120), goal: z.string().trim().max(500).optional(), startAt: z.iso.datetime(), endAt: z.iso.datetime(), wipLimit: z.number().int().min(1).max(20).default(3) }).refine((value) => new Date(value.endAt) > new Date(value.startAt), { message: "Sprint must end after it starts" }).parse(req.body);
-  const sprint = await db.sprint.create({ data: { userId: user.id, ...body, startAt: new Date(body.startAt), endAt: new Date(body.endAt), status: "ACTIVE" } });
+  const body = z
+    .object({
+      name: z.string().trim().min(1).max(120),
+      goal: z.string().trim().max(500).optional(),
+      startAt: z.iso.datetime(),
+      endAt: z.iso.datetime(),
+      wipLimit: z.number().int().min(1).max(20).default(3),
+    })
+    .refine((value) => new Date(value.endAt) > new Date(value.startAt), {
+      message: "Sprint must end after it starts",
+    })
+    .parse(req.body);
+  const sprint = await db.sprint.create({
+    data: {
+      userId: user.id,
+      ...body,
+      startAt: new Date(body.startAt),
+      endAt: new Date(body.endAt),
+      status: "ACTIVE",
+    },
+  });
   reply.code(201);
   return sprint;
 });
@@ -324,7 +642,18 @@ app.patch("/api/sprints/:id", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   const id = (req.params as { id: string }).id,
-    body = z.object({ name: z.string().trim().min(1).max(120).optional(), goal: z.string().trim().max(500).nullable().optional(), status: z.enum(["PLANNED", "ACTIVE", "COMPLETED", "ARCHIVED"]).optional(), wipLimit: z.number().int().min(1).max(20).optional(), review: z.string().max(5000).nullable().optional(), retrospective: z.string().max(5000).nullable().optional() }).parse(req.body),
+    body = z
+      .object({
+        name: z.string().trim().min(1).max(120).optional(),
+        goal: z.string().trim().max(500).nullable().optional(),
+        status: z
+          .enum(["PLANNED", "ACTIVE", "COMPLETED", "ARCHIVED"])
+          .optional(),
+        wipLimit: z.number().int().min(1).max(20).optional(),
+        review: z.string().max(5000).nullable().optional(),
+        retrospective: z.string().max(5000).nullable().optional(),
+      })
+      .parse(req.body),
     sprint = await db.sprint.findFirst({ where: { id, userId: user.id } });
   if (!sprint) return reply.code(404).send({ error: "Sprint not found" });
   return db.sprint.update({ where: { id }, data: body });
@@ -332,48 +661,204 @@ app.patch("/api/sprints/:id", async (req, reply) => {
 app.get("/api/follow-ups", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const now = new Date(), twoDaysAgo = new Date(now.getTime() - 2 * 86400000), oneDayAgo = new Date(now.getTime() - 86400000);
+  const now = new Date(),
+    twoDaysAgo = new Date(now.getTime() - 2 * 86400000),
+    oneDayAgo = new Date(now.getTime() - 86400000);
   const [tasks, emails, approvals, preferences] = await Promise.all([
-    db.task.findMany({ where: { userId: user.id, status: { notIn: ["DONE", "ARCHIVED"] }, dueAt: { lt: now } }, orderBy: { dueAt: "asc" }, take: 25 }),
-    db.email.findMany({ where: { userId: user.id, receivedAt: { lt: twoDaysAgo }, analysisRecord: { requiresAction: true }, drafts: { none: {} } }, include: { analysisRecord: true }, orderBy: { receivedAt: "asc" }, take: 25 }),
-    db.approvalRequest.findMany({ where: { userId: user.id, status: "PENDING", requestedAt: { lt: oneDayAgo } }, include: { draft: true }, orderBy: { requestedAt: "asc" }, take: 25 }),
+    db.task.findMany({
+      where: {
+        userId: user.id,
+        status: { notIn: ["DONE", "ARCHIVED"] },
+        dueAt: { lt: now },
+      },
+      orderBy: { dueAt: "asc" },
+      take: 25,
+    }),
+    db.email.findMany({
+      where: {
+        userId: user.id,
+        receivedAt: { lt: twoDaysAgo },
+        analysisRecord: { requiresAction: true },
+        drafts: { none: {} },
+      },
+      include: { analysisRecord: true },
+      orderBy: { receivedAt: "asc" },
+      take: 25,
+    }),
+    db.approvalRequest.findMany({
+      where: {
+        userId: user.id,
+        status: "PENDING",
+        requestedAt: { lt: oneDayAgo },
+      },
+      include: { draft: true },
+      orderBy: { requestedAt: "asc" },
+      take: 25,
+    }),
     db.followUpPreference.findMany({ where: { userId: user.id } }),
   ]);
   const signals = [
-    ...tasks.map((task) => ({ key: `task:${task.id}`, kind: "OVERDUE_TASK", title: task.title, detail: `Due ${task.dueAt?.toISOString() ?? "earlier"}`, href: "/tasks", occurredAt: task.dueAt?.toISOString() ?? task.updatedAt.toISOString(), urgency: task.priority })),
-    ...emails.map((email) => ({ key: `email:${email.id}`, kind: "AWAITING_REPLY", title: email.subject, detail: `${email.sender} · ${email.analysisRecord?.summary ?? email.preview}`, href: `/inbox/${email.id}`, occurredAt: email.receivedAt.toISOString(), urgency: email.analysisRecord?.priority ?? "MEDIUM" })),
-    ...approvals.map((approval) => ({ key: `approval:${approval.id}`, kind: "STALE_APPROVAL", title: approval.draft?.subject ?? approval.type.replaceAll("_", " "), detail: approval.reason, href: `/approvals/${approval.id}`, occurredAt: approval.requestedAt.toISOString(), urgency: approval.riskLevel })),
+    ...tasks.map((task) => ({
+      key: `task:${task.id}`,
+      kind: "OVERDUE_TASK",
+      title: task.title,
+      detail: `Due ${task.dueAt?.toISOString() ?? "earlier"}`,
+      href: "/tasks",
+      occurredAt: task.dueAt?.toISOString() ?? task.updatedAt.toISOString(),
+      urgency: task.priority,
+    })),
+    ...emails.map((email) => ({
+      key: `email:${email.id}`,
+      kind: "AWAITING_REPLY",
+      title: email.subject,
+      detail: `${email.sender} · ${email.analysisRecord?.summary ?? email.preview}`,
+      href: `/inbox/${email.id}`,
+      occurredAt: email.receivedAt.toISOString(),
+      urgency: email.analysisRecord?.priority ?? "MEDIUM",
+    })),
+    ...approvals.map((approval) => ({
+      key: `approval:${approval.id}`,
+      kind: "STALE_APPROVAL",
+      title: approval.draft?.subject ?? approval.type.replaceAll("_", " "),
+      detail: approval.reason,
+      href: `/approvals/${approval.id}`,
+      occurredAt: approval.requestedAt.toISOString(),
+      urgency: approval.riskLevel,
+    })),
   ];
   const preference = new Map(preferences.map((item) => [item.signalKey, item]));
-  return signals.filter((signal) => { const item = preference.get(signal.key); return !item?.dismissedAt && (!item?.snoozedUntil || item.snoozedUntil <= now); });
+  return signals.filter((signal) => {
+    const item = preference.get(signal.key);
+    return (
+      !item?.dismissedAt && (!item?.snoozedUntil || item.snoozedUntil <= now)
+    );
+  });
 });
 app.get("/api/relationships", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const contacts = await db.contactMemory.findMany({ where: { userId: user.id }, orderBy: { lastInteractionAt: "desc" }, take: 100 });
-  return Promise.all(contacts.map(async (contact) => ({ ...contact, openCommitments: await db.task.count({ where: { userId: user.id, status: { notIn: ["DONE", "ARCHIVED"] }, email: { sender: { contains: contact.email, mode: "insensitive" } } } }) })));
+  const contacts = await db.contactMemory.findMany({
+    where: { userId: user.id },
+    orderBy: { lastInteractionAt: "desc" },
+    take: 100,
+  });
+  return Promise.all(
+    contacts.map(async (contact) => ({
+      ...contact,
+      openCommitments: await db.task.count({
+        where: {
+          userId: user.id,
+          status: { notIn: ["DONE", "ARCHIVED"] },
+          email: { sender: { contains: contact.email, mode: "insensitive" } },
+        },
+      }),
+    })),
+  );
 });
 app.post("/api/relationships/rebuild", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const emails = await db.email.findMany({ where: { userId: user.id }, select: { sender: true, subject: true, receivedAt: true } }), groups = new Map<string,{name:string|null;subjects:string[];last:Date;count:number}>();
-  for (const email of emails) { const address = addressFromSender(email.sender), current = groups.get(address); if(current){current.subjects.push(email.subject);current.count++;if(email.receivedAt>current.last)current.last=email.receivedAt}else groups.set(address,{name:nameFromSender(email.sender),subjects:[email.subject],last:email.receivedAt,count:1}); }
-  for (const [email, group] of groups) await db.contactMemory.upsert({ where: { userId_email: { userId: user.id, email } }, update: { displayName: group.name, commonTopics: topicsFromSubjects(group.subjects), interactionCount: group.count, lastInteractionAt: group.last }, create: { userId: user.id, email, displayName: group.name, commonTopics: topicsFromSubjects(group.subjects), interactionCount: group.count, lastInteractionAt: group.last } });
+  const emails = await db.email.findMany({
+      where: { userId: user.id },
+      select: { sender: true, subject: true, receivedAt: true },
+    }),
+    groups = new Map<
+      string,
+      { name: string | null; subjects: string[]; last: Date; count: number }
+    >();
+  for (const email of emails) {
+    const address = addressFromSender(email.sender),
+      current = groups.get(address);
+    if (current) {
+      current.subjects.push(email.subject);
+      current.count++;
+      if (email.receivedAt > current.last) current.last = email.receivedAt;
+    } else
+      groups.set(address, {
+        name: nameFromSender(email.sender),
+        subjects: [email.subject],
+        last: email.receivedAt,
+        count: 1,
+      });
+  }
+  for (const [email, group] of groups)
+    await db.contactMemory.upsert({
+      where: { userId_email: { userId: user.id, email } },
+      update: {
+        displayName: group.name,
+        commonTopics: topicsFromSubjects(group.subjects),
+        interactionCount: group.count,
+        lastInteractionAt: group.last,
+      },
+      create: {
+        userId: user.id,
+        email,
+        displayName: group.name,
+        commonTopics: topicsFromSubjects(group.subjects),
+        interactionCount: group.count,
+        lastInteractionAt: group.last,
+      },
+    });
   return { contacts: groups.size };
 });
 app.patch("/api/relationships/:id", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const id = (req.params as { id: string }).id, body = z.object({ displayName: z.string().trim().max(120).nullable().optional(), notes: z.string().max(5000).nullable().optional(), preferredMeetingMinutes: z.number().int().min(15).max(240).nullable().optional(), importantDate: z.iso.datetime().nullable().optional() }).parse(req.body), contact = await db.contactMemory.findFirst({ where: { id, userId: user.id } });
-  if(!contact)return reply.code(404).send({error:"Contact memory not found"});
-  return db.contactMemory.update({ where: { id }, data: { ...body, importantDate: body.importantDate === undefined ? undefined : body.importantDate === null ? null : new Date(body.importantDate) } });
+  const id = (req.params as { id: string }).id,
+    body = z
+      .object({
+        displayName: z.string().trim().max(120).nullable().optional(),
+        notes: z.string().max(5000).nullable().optional(),
+        preferredMeetingMinutes: z
+          .number()
+          .int()
+          .min(15)
+          .max(240)
+          .nullable()
+          .optional(),
+        importantDate: z.iso.datetime().nullable().optional(),
+      })
+      .parse(req.body),
+    contact = await db.contactMemory.findFirst({
+      where: { id, userId: user.id },
+    });
+  if (!contact)
+    return reply.code(404).send({ error: "Contact memory not found" });
+  return db.contactMemory.update({
+    where: { id },
+    data: {
+      ...body,
+      importantDate:
+        body.importantDate === undefined
+          ? undefined
+          : body.importantDate === null
+            ? null
+            : new Date(body.importantDate),
+    },
+  });
 });
 app.post("/api/follow-ups/action", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const body = z.object({ signalKey: z.string().min(3).max(200), action: z.enum(["SNOOZE", "DISMISS"]), days: z.number().int().min(1).max(90).optional() }).parse(req.body);
-  const data = body.action === "DISMISS" ? { dismissedAt: new Date(), snoozedUntil: null } : { dismissedAt: null, snoozedUntil: new Date(Date.now() + (body.days ?? 1) * 86400000) };
-  await db.followUpPreference.upsert({ where: { userId_signalKey: { userId: user.id, signalKey: body.signalKey } }, update: data, create: { userId: user.id, signalKey: body.signalKey, ...data } });
+  const body = z
+    .object({
+      signalKey: z.string().min(3).max(200),
+      action: z.enum(["SNOOZE", "DISMISS"]),
+      days: z.number().int().min(1).max(90).optional(),
+    })
+    .parse(req.body);
+  const data =
+    body.action === "DISMISS"
+      ? { dismissedAt: new Date(), snoozedUntil: null }
+      : {
+          dismissedAt: null,
+          snoozedUntil: new Date(Date.now() + (body.days ?? 1) * 86400000),
+        };
+  await db.followUpPreference.upsert({
+    where: { userId_signalKey: { userId: user.id, signalKey: body.signalKey } },
+    update: data,
+    create: { userId: user.id, signalKey: body.signalKey, ...data },
+  });
   reply.code(204);
 });
 app.get("/api/calendar", async (req, reply) => {
@@ -388,28 +873,79 @@ app.get("/api/calendar", async (req, reply) => {
 app.get("/api/calendar/focus", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const settings = await db.userSettings.upsert({ where: { userId: user.id }, update: {}, create: { userId: user.id } }),
-    rangeStart = new Date(), rangeEnd = new Date(Date.now() + 7 * 86400000),
-    events = await db.calendarEvent.findMany({ where: { userId: user.id, startAt: { lt: rangeEnd }, endAt: { gt: rangeStart } }, orderBy: { startAt: "asc" } }),
-    duration = 90 * 60000, suggestions: Array<{ start: string; end: string; score: number }> = [];
+  const settings = await db.userSettings.upsert({
+      where: { userId: user.id },
+      update: {},
+      create: { userId: user.id },
+    }),
+    rangeStart = new Date(),
+    rangeEnd = new Date(Date.now() + 7 * 86400000),
+    events = await db.calendarEvent.findMany({
+      where: {
+        userId: user.id,
+        startAt: { lt: rangeEnd },
+        endAt: { gt: rangeStart },
+      },
+      orderBy: { startAt: "asc" },
+    }),
+    duration = 90 * 60000,
+    suggestions: Array<{ start: string; end: string; score: number }> = [];
   for (let day = 0; day < 7 && suggestions.length < 4; day++) {
-    const start = new Date(rangeStart); start.setDate(rangeStart.getDate() + day); start.setHours(settings.workingHourStart, 0, 0, 0);
-    const end = new Date(start); end.setHours(settings.workingHourEnd, 0, 0, 0);
+    const start = new Date(rangeStart);
+    start.setDate(rangeStart.getDate() + day);
+    start.setHours(settings.workingHourStart, 0, 0, 0);
+    const end = new Date(start);
+    end.setHours(settings.workingHourEnd, 0, 0, 0);
     if ([0, 6].includes(start.getDay())) continue;
     let cursor = new Date(Math.max(start.getTime(), rangeStart.getTime()));
-    for (const event of events.filter((item) => item.endAt > start && item.startAt < end)) {
+    for (const event of events.filter(
+      (item) => item.endAt > start && item.startAt < end,
+    )) {
       if (event.startAt.getTime() - cursor.getTime() >= duration) break;
-      if (event.endAt > cursor) cursor = new Date(event.endAt.getTime() + settings.meetingBuffer * 60000);
+      if (event.endAt > cursor)
+        cursor = new Date(
+          event.endAt.getTime() + settings.meetingBuffer * 60000,
+        );
     }
-    if (end.getTime() - cursor.getTime() >= duration) suggestions.push({ start: cursor.toISOString(), end: new Date(cursor.getTime() + duration).toISOString(), score: Math.max(60, 100 - events.filter((item) => item.startAt >= start && item.startAt < end).length * 8) });
+    if (end.getTime() - cursor.getTime() >= duration)
+      suggestions.push({
+        start: cursor.toISOString(),
+        end: new Date(cursor.getTime() + duration).toISOString(),
+        score: Math.max(
+          60,
+          100 -
+            events.filter((item) => item.startAt >= start && item.startAt < end)
+              .length *
+              8,
+        ),
+      });
   }
   return suggestions;
 });
 app.post("/api/calendar/focus", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const body = z.object({ title: z.string().trim().min(1).max(120).default("Focus time"), start: z.iso.datetime(), end: z.iso.datetime(), autoDecline: z.boolean().default(false) }).refine((value) => new Date(value.end) > new Date(value.start), { message: "Focus time must end after it starts" }).parse(req.body);
-  const approval = await db.approvalRequest.create({ data: { userId: user.id, type: "CREATE_FOCUS_TIME", reason: "Protect an uninterrupted deep-work block", riskLevel: "MEDIUM", payload: { kind: "CREATE_FOCUS_TIME", ...body }, status: "PENDING" } });
+  const body = z
+    .object({
+      title: z.string().trim().min(1).max(120).default("Focus time"),
+      start: z.iso.datetime(),
+      end: z.iso.datetime(),
+      autoDecline: z.boolean().default(false),
+    })
+    .refine((value) => new Date(value.end) > new Date(value.start), {
+      message: "Focus time must end after it starts",
+    })
+    .parse(req.body);
+  const approval = await db.approvalRequest.create({
+    data: {
+      userId: user.id,
+      type: "CREATE_FOCUS_TIME",
+      reason: "Protect an uninterrupted deep-work block",
+      riskLevel: "MEDIUM",
+      payload: { kind: "CREATE_FOCUS_TIME", ...body },
+      status: "PENDING",
+    },
+  });
   reply.code(201);
   return approval;
 });
@@ -432,8 +968,13 @@ app.patch("/api/tasks/:id", async (req, reply) => {
     })
     .parse(req.body);
   if (body.sprintId) {
-    const sprint = await db.sprint.findFirst({ where: { id: body.sprintId, userId: user.id } });
-    if (!sprint) return reply.code(400).send({ error: "Sprint does not belong to this workspace" });
+    const sprint = await db.sprint.findFirst({
+      where: { id: body.sprintId, userId: user.id },
+    });
+    if (!sprint)
+      return reply
+        .code(400)
+        .send({ error: "Sprint does not belong to this workspace" });
   }
   return db.task.update({
     where: { id: (req.params as { id: string }).id, userId: user.id },
@@ -497,8 +1038,31 @@ app.patch("/api/approvals/:id", async (req, reply) => {
     await enqueue(
       { name: "approval.execute", userId: user.id, approvalId: id },
       `approval-${current.executionKey}`,
+      { delay: 10000 },
     );
   return result;
+});
+app.post("/api/approvals/:id/cancel", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const id = (req.params as { id: string }).id,
+    approval = await db.approvalRequest.findFirst({
+      where: { id, userId: user.id, status: "APPROVED" },
+    });
+  if (!approval)
+    return reply
+      .code(409)
+      .send({ error: "This action can no longer be cancelled" });
+  const job = await agentQueue.getJob(`approval-${approval.executionKey}`),
+    state = await job?.getState();
+  if (job && state && ["delayed", "waiting", "prioritized"].includes(state))
+    await job.remove();
+  else if (state === "active")
+    return reply.code(409).send({ error: "Execution has already started" });
+  return db.approvalRequest.update({
+    where: { id },
+    data: { status: "REJECTED", error: "Cancelled during the safety window" },
+  });
 });
 app.post("/api/approvals/:id/retry", async (req, reply) => {
   const user = await requireUser(req, reply);

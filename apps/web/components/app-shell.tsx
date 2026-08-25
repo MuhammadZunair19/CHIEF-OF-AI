@@ -6,6 +6,8 @@ import {
   Activity,
   CalendarDays,
   Command,
+  CircleHelp,
+  Focus,
   Inbox,
   LayoutDashboard,
   LogOut,
@@ -61,6 +63,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     [initials, setInitials] = useState(""),
     [mobile, setMobile] = useState(false),
     [searchOpen, setSearchOpen] = useState(false),
+    [shortcutsOpen, setShortcutsOpen] = useState(false),
+    [quiet, setQuiet] = useState(false),
+    [coreState, setCoreState] = useState<
+      "online" | "thinking" | "approval" | "success" | "failure"
+    >("online"),
     [dark, setDark] = useState(false),
     [query, setQuery] = useState(""),
     [results, setResults] = useState<SearchData | null>(null);
@@ -71,6 +78,37 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       (!stored && window.matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.classList.toggle("dark", enabled);
     setDark(enabled);
+  }, []);
+  useEffect(() => {
+    setQuiet(localStorage.getItem("chief-quiet") === "true");
+    const events = new EventSource("/api/events");
+    let reset: ReturnType<typeof setTimeout> | undefined;
+    events.onmessage = (message) => {
+      try {
+        const event = JSON.parse(message.data) as { type?: string };
+        const next = event.type?.includes("failed")
+          ? "failure"
+          : event.type === "approval.created"
+            ? "approval"
+            : event.type?.includes("completed") ||
+                event.type === "approval.updated"
+              ? "success"
+              : "thinking";
+        setCoreState(next);
+        clearTimeout(reset);
+        reset = setTimeout(
+          () => setCoreState("online"),
+          next === "approval" ? 8000 : 3500,
+        );
+      } catch {
+        setCoreState("online");
+      }
+    };
+    events.onerror = () => setCoreState("failure");
+    return () => {
+      clearTimeout(reset);
+      events.close();
+    };
   }, []);
   useEffect(() => {
     fetch("/api/settings")
@@ -113,6 +151,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         setSearchOpen(true);
       }
       if (event.key === "Escape") setSearchOpen(false);
+      const target = event.target as HTMLElement;
+      if (
+        event.key === "?" &&
+        !["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
+      )
+        setShortcutsOpen(true);
+      if (event.key === "Escape") setShortcutsOpen(false);
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
@@ -140,8 +185,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("dark", next);
     localStorage.setItem("chief-theme", next ? "dark" : "light");
   };
+  const toggleQuiet = () => {
+    const next = !quiet;
+    setQuiet(next);
+    localStorage.setItem("chief-quiet", String(next));
+  };
   return (
-    <div className="shell">
+    <div className={`shell ${quiet ? "quiet-shell" : ""}`}>
       <aside className={`sidebar ${mobile ? "sidebar-open" : ""}`}>
         <div className="brand">
           <span className="brandmark">C</span>
@@ -156,7 +206,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <X size={18} />
           </button>
         </div>
-        <div className="core-widget" aria-hidden="true">
+        <div className={`core-widget core-${coreState}`} aria-live="polite">
           <div className="core-scene">
             <div className="core-cube">
               <i className="cube-face face-front" />
@@ -171,7 +221,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div>
             <strong>Chief core</strong>
-            <span><i className="live-dot" /> Online</span>
+            <span>
+              <i className="live-dot" />{" "}
+              {coreState === "online"
+                ? "Online"
+                : coreState === "thinking"
+                  ? "Thinking"
+                  : coreState === "approval"
+                    ? "Needs approval"
+                    : coreState === "success"
+                      ? "Done"
+                      : "Needs attention"}
+            </span>
           </div>
         </div>
         <Navigation path={path} close={() => setMobile(false)} />
@@ -199,6 +260,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="main">
         <header className="topbar">
           <div className="row">
+            <button
+              className={`button icon-only ${quiet ? "active" : ""}`}
+              onClick={toggleQuiet}
+              aria-label={quiet ? "Exit quiet mode" : "Enter quiet mode"}
+              title="Quiet mode"
+            >
+              <Focus size={16} />
+            </button>
+            <button
+              className="button icon-only"
+              onClick={() => setShortcutsOpen(true)}
+              aria-label="Keyboard shortcuts"
+              title="Keyboard shortcuts"
+            >
+              <CircleHelp size={16} />
+            </button>
             <button
               className="button mobile-menu"
               onClick={() => setMobile(true)}
@@ -245,6 +322,67 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           close={() => setSearchOpen(false)}
         />
       )}
+      {shortcutsOpen && (
+        <ShortcutDialog close={() => setShortcutsOpen(false)} />
+      )}
+    </div>
+  );
+}
+function ShortcutDialog({ close }: { close: () => void }) {
+  const groups = [
+    [
+      "Global",
+      [
+        ["Ctrl/⌘ K", "Open command palette"],
+        ["?", "Show this shortcut guide"],
+        ["Esc", "Close overlays"],
+      ],
+    ],
+    [
+      "Inbox",
+      [
+        ["J / K", "Move through messages"],
+        ["A", "Analyze selected email"],
+        ["T", "Create a task"],
+        ["R", "Open Reply Studio"],
+        ["S / E", "Snooze / mark handled"],
+      ],
+    ],
+  ] as const;
+  return (
+    <div
+      className="dialog-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Keyboard shortcuts"
+    >
+      <button
+        className="dialog-scrim"
+        onClick={close}
+        aria-label="Close shortcuts"
+      />
+      <section className="shortcut-dialog">
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">Move at thought speed</div>
+            <h2>Keyboard shortcuts</h2>
+          </div>
+          <button className="icon-button" onClick={close}>
+            <X size={17} />
+          </button>
+        </div>
+        {groups.map(([label, shortcuts]) => (
+          <div className="shortcut-group" key={label}>
+            <strong>{label}</strong>
+            {shortcuts.map(([keys, action]) => (
+              <div key={keys}>
+                <span>{action}</span>
+                <kbd>{keys}</kbd>
+              </div>
+            ))}
+          </div>
+        ))}
+      </section>
     </div>
   );
 }
@@ -280,13 +418,62 @@ function SearchDialog({
     count = (results?.emails.length ?? 0) + (results?.tasks.length ?? 0),
     normalized = query.trim().toLowerCase();
   const actions = [
-    { id: "sync", label: "Sync Gmail now", detail: "Retrieve current Gmail and Calendar records", Icon: RefreshCw, run: async () => { await fetch("/api/inbox/sync", { method: "POST" }); } },
-    { id: "approvals", label: "Review pending approvals", detail: "Open approval queue", Icon: ShieldCheck, run: async () => location.assign("/approvals") },
-    { id: "radar", label: "Open follow-up radar", detail: "Find commitments that need a nudge", Icon: Radar, run: async () => location.assign("/follow-ups") },
-    { id: "sprint", label: "Switch tasks to Sprint view", detail: "Focus on active and upcoming work", Icon: SquareKanban, run: async () => { localStorage.setItem("chief-task-view", "sprint"); location.assign("/tasks"); } },
-  ].filter((action) => !normalized || `${action.label} ${action.detail}`.toLowerCase().includes(normalized));
-  const execute = async (id: string, run: () => Promise<unknown>) => { setRunning(id); try { await run(); close(); } finally { setRunning(null); } };
-  const createTask = async () => execute("create", async () => { const response = await fetch("/api/tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: query.trim(), priority: "MEDIUM" }) }); if (response.ok) location.assign("/tasks"); });
+    {
+      id: "sync",
+      label: "Sync Gmail now",
+      detail: "Retrieve current Gmail and Calendar records",
+      Icon: RefreshCw,
+      run: async () => {
+        await fetch("/api/inbox/sync", { method: "POST" });
+      },
+    },
+    {
+      id: "approvals",
+      label: "Review pending approvals",
+      detail: "Open approval queue",
+      Icon: ShieldCheck,
+      run: async () => location.assign("/approvals"),
+    },
+    {
+      id: "radar",
+      label: "Open follow-up radar",
+      detail: "Find commitments that need a nudge",
+      Icon: Radar,
+      run: async () => location.assign("/follow-ups"),
+    },
+    {
+      id: "sprint",
+      label: "Switch tasks to Sprint view",
+      detail: "Focus on active and upcoming work",
+      Icon: SquareKanban,
+      run: async () => {
+        localStorage.setItem("chief-task-view", "sprint");
+        location.assign("/tasks");
+      },
+    },
+  ].filter(
+    (action) =>
+      !normalized ||
+      `${action.label} ${action.detail}`.toLowerCase().includes(normalized),
+  );
+  const execute = async (id: string, run: () => Promise<unknown>) => {
+    setRunning(id);
+    try {
+      await run();
+      close();
+    } finally {
+      setRunning(null);
+    }
+  };
+  const createTask = async () =>
+    execute("create", async () => {
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: query.trim(), priority: "MEDIUM" }),
+      });
+      if (response.ok) location.assign("/tasks");
+    });
   return (
     <div
       className="dialog-layer"
@@ -314,31 +501,67 @@ function SearchDialog({
         </div>
         <div className="command-results">
           <div className="command-group-label">Quick actions</div>
-          {query.trim().length >= 2 && <button className="command-action" onClick={() => void createTask()} disabled={running === "create"}><Plus size={16}/><div><strong>Create task “{query.trim()}”</strong><span>Add a medium-priority commitment</span></div><kbd>Enter</kbd></button>}
-          {actions.map(({id,label,detail,Icon,run}) => <button className="command-action" onClick={() => void execute(id,run)} disabled={running===id} key={id}><Icon className={running===id?"spin":""} size={16}/><div><strong>{label}</strong><span>{detail}</span></div></button>)}
-          {query.trim().length >= 2 && <div className="command-group-label">Search results</div>}
-          {query.trim().length >= 2 && !results && <div className="command-empty">Searching…</div>}
-          {query.trim().length >= 2 && results && count === 0 && <div className="command-empty">No matching records.</div>}
+          {query.trim().length >= 2 && (
+            <button
+              className="command-action"
+              onClick={() => void createTask()}
+              disabled={running === "create"}
+            >
+              <Plus size={16} />
+              <div>
+                <strong>Create task “{query.trim()}”</strong>
+                <span>Add a medium-priority commitment</span>
+              </div>
+              <kbd>Enter</kbd>
+            </button>
+          )}
+          {actions.map(({ id, label, detail, Icon, run }) => (
+            <button
+              className="command-action"
+              onClick={() => void execute(id, run)}
+              disabled={running === id}
+              key={id}
+            >
+              <Icon className={running === id ? "spin" : ""} size={16} />
+              <div>
+                <strong>{label}</strong>
+                <span>{detail}</span>
+              </div>
+            </button>
+          ))}
+          {query.trim().length >= 2 && (
+            <div className="command-group-label">Search results</div>
+          )}
+          {query.trim().length >= 2 && !results && (
+            <div className="command-empty">Searching…</div>
+          )}
+          {query.trim().length >= 2 && results && count === 0 && (
+            <div className="command-empty">No matching records.</div>
+          )}
           {results && (
             <>
-            {results.emails.map((email) => (
-              <Link href={`/inbox/${email.id}`} onClick={close} key={email.id}>
-                <Inbox size={16} />
-                <div>
-                  <strong>{email.subject}</strong>
-                  <span>{email.sender}</span>
-                </div>
-              </Link>
-            ))}
-            {results.tasks.map((task) => (
-              <Link href="/tasks" onClick={close} key={task.id}>
-                <SquareKanban size={16} />
-                <div>
-                  <strong>{task.title}</strong>
-                  <span>{task.status.replaceAll("_", " ")}</span>
-                </div>
-              </Link>
-            ))}
+              {results.emails.map((email) => (
+                <Link
+                  href={`/inbox/${email.id}`}
+                  onClick={close}
+                  key={email.id}
+                >
+                  <Inbox size={16} />
+                  <div>
+                    <strong>{email.subject}</strong>
+                    <span>{email.sender}</span>
+                  </div>
+                </Link>
+              ))}
+              {results.tasks.map((task) => (
+                <Link href="/tasks" onClick={close} key={task.id}>
+                  <SquareKanban size={16} />
+                  <div>
+                    <strong>{task.title}</strong>
+                    <span>{task.status.replaceAll("_", " ")}</span>
+                  </div>
+                </Link>
+              ))}
             </>
           )}
         </div>

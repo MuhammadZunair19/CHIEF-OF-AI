@@ -1,4 +1,4 @@
-import { Queue } from "bullmq";
+import { Queue, type JobsOptions } from "bullmq";
 import IORedis from "ioredis";
 import type { QueueJob } from "@chief/contracts";
 export const connection = new IORedis(process.env.REDIS_URL!, {
@@ -23,5 +23,5 @@ export const agentQueue = new Queue<QueueJob>("chief-agent", {
     removeOnFail: true,
   },
 });
-export const enqueue = (job: QueueJob, id: string) =>
-  agentQueue.add(job.name, job, { jobId: id });
+export const enqueue = (job: QueueJob, id: string, options?: JobsOptions) =>
+  agentQueue.add(job.name, job, { ...options, jobId: id });
