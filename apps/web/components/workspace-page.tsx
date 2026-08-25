@@ -4,8 +4,10 @@ import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
+  ArrowUpRight,
   CalendarDays,
   CheckCircle2,
+  Clock3,
   Columns3,
   Gauge,
   Grid2X2,
@@ -17,6 +19,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Zap,
 } from "lucide-react";
 type Kind =
   | "dashboard"
@@ -40,6 +43,13 @@ type DashboardData = {
     createdAt: string;
     steps: Array<{ title: string }>;
   }>;
+  command: {
+    overdue: Task[];
+    meetings: CalendarEvent[];
+    priorityEmails: Email[];
+    focusMinutes: number;
+    dayScore: number;
+  };
 };
 type Email = {
   id: string;
@@ -315,6 +325,21 @@ function Dashboard({ data }: { data: DashboardData }) {
   ];
   return (
     <>
+      <section className="command-hero card">
+        <div className="command-copy">
+          <div className="eyebrow"><span className="live-dot" /> Live command center</div>
+          <h2>{greeting()}, your day is {data.command.dayScore >= 75 ? "under control" : "asking for attention"}.</h2>
+          <p className="subtle">{data.command.overdue.length ? `${data.command.overdue.length} overdue commitment${data.command.overdue.length === 1 ? "" : "s"} should be handled first.` : "No overdue commitments. You have room to work proactively."}</p>
+          <div className="command-actions">
+            <Link className="button primary" href="/tasks"><Zap size={16} />Plan my day</Link>
+            <Link className="button" href="/approvals">Review approvals<ArrowUpRight size={15} /></Link>
+          </div>
+        </div>
+        <div className="day-orbit" style={{"--score": `${data.command.dayScore * 3.6}deg`} as React.CSSProperties}>
+          <div><strong>{data.command.dayScore}</strong><span>day score</span></div>
+          <i className="orbit-dot" />
+        </div>
+      </section>
       <div className="grid4">
         {metrics.map(({ label, value, Icon }) => (
           <div className="card" key={label}>
@@ -325,6 +350,22 @@ function Dashboard({ data }: { data: DashboardData }) {
             <div className="metric">{value}</div>
           </div>
         ))}
+      </div>
+      <div className="command-grid">
+        <section className="card command-panel">
+          <div className="section-head"><h2>Next on your calendar</h2><CalendarDays size={17} /></div>
+          {data.command.meetings.length ? data.command.meetings.slice(0,3).map((meeting)=><div className="command-line" key={meeting.id}><time>{new Intl.DateTimeFormat(undefined,{hour:"numeric",minute:"2-digit"}).format(new Date(meeting.startAt))}</time><div><strong>{meeting.title}</strong><span className="subtle">{meeting.attendees.length} attendee{meeting.attendees.length===1?"":"s"}</span></div></div>) : <div className="mini-empty">Your calendar is clear for the rest of today.</div>}
+        </section>
+        <section className="card command-panel focus-panel">
+          <div className="section-head"><h2>Focus capacity</h2><Clock3 size={17} /></div>
+          <strong className="focus-number">{Math.floor(data.command.focusMinutes/60)}h {data.command.focusMinutes%60}m</strong>
+          <span className="subtle">Estimated open capacity after today&apos;s synchronized meetings.</span>
+          <div className="focus-meter"><i style={{width:`${Math.min(100,data.command.focusMinutes/4.8)}%`}} /></div>
+        </section>
+        <section className="card command-panel">
+          <div className="section-head"><h2>Priority signals</h2><InboxIcon size={17} /></div>
+          {data.command.priorityEmails.length ? data.command.priorityEmails.slice(0,3).map((email)=><Link className="command-line item-link" href={`/inbox/${email.id}`} key={email.id}><span className="dot"/><div><strong>{email.subject}</strong><span className="subtle">{email.sender}</span></div></Link>) : <div className="mini-empty">No analyzed messages currently need action.</div>}
+        </section>
       </div>
       <section className="card">
         <div className="section-head">
@@ -361,6 +402,7 @@ function Dashboard({ data }: { data: DashboardData }) {
     </>
   );
 }
+function greeting(){const hour=new Date().getHours();return hour<12?"Good morning":hour<18?"Good afternoon":"Good evening"}
 function Inbox({ data }: { data: Email[] }) {
   return (
     <section className="card">

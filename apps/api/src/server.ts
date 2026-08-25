@@ -89,7 +89,10 @@ app.get("/api/search", async (req, reply) => {
 app.get("/api/dashboard", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
-  const [pending, tasksDue, attention, meetings, recent] = await Promise.all([
+  const now = new Date(),
+    dayEnd = new Date(now);
+  dayEnd.setHours(23, 59, 59, 999);
+  const [pending, tasksDue, attention, meetings, recent, overdue, todayMeetings, priorityEmails] = await Promise.all([
     db.approvalRequest.count({ where: { userId: user.id, status: "PENDING" } }),
     db.task.count({
       where: {
@@ -117,8 +120,31 @@ app.get("/api/dashboard", async (req, reply) => {
       orderBy: { createdAt: "desc" },
       include: { steps: { take: 1, orderBy: { startedAt: "desc" } } },
     }),
+    db.task.findMany({
+      where: { userId: user.id, status: { notIn: ["DONE", "ARCHIVED"] }, dueAt: { lt: now } },
+      orderBy: [{ priority: "desc" }, { dueAt: "asc" }],
+      take: 4,
+    }),
+    db.calendarEvent.findMany({
+      where: { userId: user.id, startAt: { gte: now, lte: dayEnd } },
+      orderBy: { startAt: "asc" },
+      take: 6,
+    }),
+    db.email.findMany({
+      where: { userId: user.id, unread: true, analysisRecord: { requiresAction: true } },
+      include: { analysisRecord: true },
+      orderBy: { receivedAt: "desc" },
+      take: 4,
+    }),
   ]);
-  return { metrics: { pending, tasksDue, attention, meetings }, recent };
+  const meetingMinutes = todayMeetings.reduce((sum, event) => sum + Math.max(0, (event.endAt.getTime() - event.startAt.getTime()) / 60000), 0),
+    focusMinutes = Math.max(0, 480 - meetingMinutes),
+    dayScore = Math.max(0, Math.min(100, 100 - overdue.length * 12 - pending * 6 - Math.max(0, meetings - 5) * 4));
+  return {
+    metrics: { pending, tasksDue, attention, meetings },
+    recent,
+    command: { overdue, meetings: todayMeetings, priorityEmails, focusMinutes: Math.round(focusMinutes), dayScore },
+  };
 });
 app.get("/api/inbox", async (req, reply) => {
   const user = await requireUser(req, reply);
