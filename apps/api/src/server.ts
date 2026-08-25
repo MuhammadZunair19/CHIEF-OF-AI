@@ -200,6 +200,14 @@ app.get("/api/tasks", async (req, reply) => {
     orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
   });
 });
+app.post("/api/tasks", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const body = z.object({ title: z.string().trim().min(1).max(240), priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).default("MEDIUM"), dueAt: z.iso.datetime().optional() }).parse(req.body);
+  const task = await db.task.create({ data: { userId: user.id, title: body.title, priority: body.priority, dueAt: body.dueAt ? new Date(body.dueAt) : null, source: "USER", createdByAi: false } });
+  reply.code(201);
+  return task;
+});
 app.get("/api/follow-ups", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;

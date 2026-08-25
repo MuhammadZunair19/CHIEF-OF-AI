@@ -11,6 +11,7 @@ import {
   LogOut,
   Menu,
   Moon,
+  Plus,
   RefreshCw,
   Radar,
   Search,
@@ -273,7 +274,17 @@ function SearchDialog({
   results: SearchData | null;
   close: () => void;
 }) {
-  const count = (results?.emails.length ?? 0) + (results?.tasks.length ?? 0);
+  const [running, setRunning] = useState<string | null>(null),
+    count = (results?.emails.length ?? 0) + (results?.tasks.length ?? 0),
+    normalized = query.trim().toLowerCase();
+  const actions = [
+    { id: "sync", label: "Sync Gmail now", detail: "Retrieve current Gmail and Calendar records", Icon: RefreshCw, run: async () => { await fetch("/api/inbox/sync", { method: "POST" }); } },
+    { id: "approvals", label: "Review pending approvals", detail: "Open approval queue", Icon: ShieldCheck, run: async () => location.assign("/approvals") },
+    { id: "radar", label: "Open follow-up radar", detail: "Find commitments that need a nudge", Icon: Radar, run: async () => location.assign("/follow-ups") },
+    { id: "sprint", label: "Switch tasks to Sprint view", detail: "Focus on active and upcoming work", Icon: SquareKanban, run: async () => { localStorage.setItem("chief-task-view", "sprint"); location.assign("/tasks"); } },
+  ].filter((action) => !normalized || `${action.label} ${action.detail}`.toLowerCase().includes(normalized));
+  const execute = async (id: string, run: () => Promise<unknown>) => { setRunning(id); try { await run(); close(); } finally { setRunning(null); } };
+  const createTask = async () => execute("create", async () => { const response = await fetch("/api/tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: query.trim(), priority: "MEDIUM" }) }); if (response.ok) location.assign("/tasks"); });
   return (
     <div
       className="dialog-layer"
@@ -299,14 +310,15 @@ function SearchDialog({
             <X size={17} />
           </button>
         </div>
-        {query.trim().length < 2 ? (
-          <div className="command-empty">Enter at least two characters.</div>
-        ) : !results ? (
-          <div className="command-empty">Searching…</div>
-        ) : count === 0 ? (
-          <div className="command-empty">No matching records.</div>
-        ) : (
-          <div className="command-results">
+        <div className="command-results">
+          <div className="command-group-label">Quick actions</div>
+          {query.trim().length >= 2 && <button className="command-action" onClick={() => void createTask()} disabled={running === "create"}><Plus size={16}/><div><strong>Create task “{query.trim()}”</strong><span>Add a medium-priority commitment</span></div><kbd>Enter</kbd></button>}
+          {actions.map(({id,label,detail,Icon,run}) => <button className="command-action" onClick={() => void execute(id,run)} disabled={running===id} key={id}><Icon className={running===id?"spin":""} size={16}/><div><strong>{label}</strong><span>{detail}</span></div></button>)}
+          {query.trim().length >= 2 && <div className="command-group-label">Search results</div>}
+          {query.trim().length >= 2 && !results && <div className="command-empty">Searching…</div>}
+          {query.trim().length >= 2 && results && count === 0 && <div className="command-empty">No matching records.</div>}
+          {results && (
+            <>
             {results.emails.map((email) => (
               <Link href={`/inbox/${email.id}`} onClick={close} key={email.id}>
                 <Inbox size={16} />
@@ -325,8 +337,9 @@ function SearchDialog({
                 </div>
               </Link>
             ))}
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </section>
     </div>
   );
