@@ -6,10 +6,17 @@ import {
   AlertTriangle,
   CalendarDays,
   CheckCircle2,
+  Columns3,
+  Gauge,
+  Grid2X2,
   Inbox as InboxIcon,
+  Layers3,
+  ListTodo,
   LoaderCircle,
+  Palette,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 type Kind =
   | "dashboard"
@@ -91,6 +98,11 @@ type Settings = {
   workingHourEnd: number;
   meetingDuration: number;
   meetingBuffer: number;
+  theme: "system" | "light" | "dark";
+  accent: "violet" | "ocean" | "ember" | "mint";
+  motion: "full" | "reduced";
+  density: "comfortable" | "compact";
+  taskView: "kanban" | "sprint" | "list" | "matrix";
   autoCreateTasks: boolean;
   requireSendApproval: boolean;
   requireScheduleApproval: boolean;
@@ -397,7 +409,21 @@ function Tasks({ data }: { data: Task[] }) {
       "DONE",
     ] as const,
     [tasks, setTasks] = useState(data),
-    [failure, setFailure] = useState<string | null>(null);
+    [failure, setFailure] = useState<string | null>(null),
+    [view, setView] = useState<"kanban" | "sprint" | "list" | "matrix">("kanban");
+  useEffect(() => {
+    const saved = localStorage.getItem("chief-task-view");
+    if (["kanban", "sprint", "list", "matrix"].includes(saved ?? ""))
+      setView(saved as typeof view);
+    fetch("/api/settings")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((settings) => settings?.taskView && setView(settings.taskView))
+      .catch(() => undefined);
+  }, []);
+  const chooseView = (next: typeof view) => {
+    setView(next);
+    localStorage.setItem("chief-task-view", next);
+  };
   const move = async (task: Task, status: (typeof columns)[number]) => {
     const previous = task.status;
     setTasks((current) =>
@@ -425,7 +451,25 @@ function Tasks({ data }: { data: Task[] }) {
           {failure}
         </div>
       )}
-      <div className="kanban">
+      <div className="task-toolbar">
+        <div>
+          <strong>{tasks.filter((task) => !["DONE", "ARCHIVED"].includes(task.status)).length} open commitments</strong>
+          <span className="subtle">Switch perspective without changing your data.</span>
+        </div>
+        <div className="view-tabs" role="tablist" aria-label="Task view">
+          {([
+            ["kanban", "Kanban", Columns3],
+            ["sprint", "Sprint", Gauge],
+            ["list", "List", ListTodo],
+            ["matrix", "Matrix", Grid2X2],
+          ] as const).map(([value, label, Icon]) => (
+            <button className={view === value ? "active" : ""} onClick={() => chooseView(value)} key={value} role="tab" aria-selected={view === value}>
+              <Icon size={15} />{label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {view === "kanban" && <div className="kanban">
         {columns.map((status) => {
           const columnTasks = tasks.filter((task) => task.status === status);
           return (
@@ -434,37 +478,7 @@ function Tasks({ data }: { data: Task[] }) {
                 <span>{status.replaceAll("_", " ")}</span>
                 <span className="badge">{columnTasks.length}</span>
               </div>
-              {columnTasks.map((task) => (
-                <div className="task" key={task.id}>
-                  <strong>{task.title}</strong>
-                  <div className="row task-meta">
-                    <span className="badge">{task.priority}</span>
-                    <span className="subtle">{task.source}</span>
-                  </div>
-                  {task.dueAt && (
-                    <div className="subtle">Due {formatDate(task.dueAt)}</div>
-                  )}
-                  <label className="field task-status">
-                    Status
-                    <select
-                      className="input"
-                      value={task.status}
-                      onChange={(event) =>
-                        void move(
-                          task,
-                          event.target.value as (typeof columns)[number],
-                        )
-                      }
-                    >
-                      {columns.map((option) => (
-                        <option value={option} key={option}>
-                          {option.replaceAll("_", " ")}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              ))}
+              {columnTasks.map((task) => <TaskCard key={task.id} task={task} columns={columns} move={move} />)}
               {!columnTasks.length && (
                 <div className="subtle column-empty">
                   No tasks in this status
@@ -473,9 +487,23 @@ function Tasks({ data }: { data: Task[] }) {
             </div>
           );
         })}
-      </div>
+      </div>}
+      {view === "list" && <div className="card task-list-view">{tasks.map((task) => <TaskCard key={task.id} task={task} columns={columns} move={move} compact />)}{!tasks.length && <Empty Icon={ListTodo} title="No tasks yet" detail="Tasks created from selected emails will appear here." />}</div>}
+      {view === "sprint" && <SprintView tasks={tasks} columns={columns} move={move} />}
+      {view === "matrix" && <MatrixView tasks={tasks} columns={columns} move={move} />}
     </>
   );
+}
+function TaskCard({ task, columns, move, compact=false }: { task: Task; columns: readonly ["BACKLOG", "TODO", "IN_PROGRESS", "WAITING", "DONE"]; move: (task: Task, status: (typeof columns)[number]) => Promise<void>; compact?: boolean }) {
+  return <div className={`task ${compact ? "task-row" : ""}`}><div className="grow"><strong>{task.title}</strong><div className="row task-meta"><span className={`badge priority-${task.priority.toLowerCase()}`}>{task.priority}</span><span className="subtle">{task.source}</span>{task.dueAt && <span className="subtle">Due {formatDate(task.dueAt)}</span>}</div></div><label className="field task-status"><span>Status</span><select className="input" value={task.status} onChange={(event) => void move(task, event.target.value as (typeof columns)[number])}>{columns.map((option) => <option value={option} key={option}>{option.replaceAll("_", " ")}</option>)}</select></label></div>;
+}
+function SprintView({ tasks, columns, move }: { tasks: Task[]; columns: readonly ["BACKLOG", "TODO", "IN_PROGRESS", "WAITING", "DONE"]; move: (task: Task, status: (typeof columns)[number]) => Promise<void> }) {
+  const completed=tasks.filter((task)=>task.status==="DONE").length,progress=tasks.length?Math.round(completed/tasks.length*100):0,groups=[{title:"In focus",detail:"Work currently moving",items:tasks.filter((task)=>["IN_PROGRESS","WAITING"].includes(task.status))},{title:"Sprint queue",detail:"Ready and planned",items:tasks.filter((task)=>["BACKLOG","TODO"].includes(task.status))},{title:"Completed",detail:"Finished commitments",items:tasks.filter((task)=>task.status==="DONE")}];
+  return <div className="sprint-view"><section className="card sprint-health"><div><div className="eyebrow">Sprint health</div><strong>{progress}% complete</strong><span className="subtle">{completed} of {tasks.length} commitments finished</span></div><div className="progress-ring" style={{"--progress":`${progress*3.6}deg`} as React.CSSProperties}><span>{progress}%</span></div></section><div className="sprint-groups">{groups.map((group)=><section className="card" key={group.title}><div className="section-head"><div><h2>{group.title}</h2><span className="subtle">{group.detail}</span></div><span className="badge">{group.items.length}</span></div>{group.items.map((task)=><TaskCard key={task.id} task={task} columns={columns} move={move} compact />)}{!group.items.length&&<div className="subtle column-empty">Nothing here yet</div>}</section>)}</div></div>;
+}
+function MatrixView({ tasks, columns, move }: { tasks: Task[]; columns: readonly ["BACKLOG", "TODO", "IN_PROGRESS", "WAITING", "DONE"]; move: (task: Task, status: (typeof columns)[number]) => Promise<void> }) {
+  const open=tasks.filter((task)=>task.status!=="DONE"),quadrants=[{title:"Do now",detail:"Urgent or high priority",items:open.filter((task)=>["URGENT","HIGH"].includes(task.priority)&&task.status!=="WAITING")},{title:"Plan next",detail:"Important, not urgent",items:open.filter((task)=>task.priority==="MEDIUM"&&task.status!=="WAITING")},{title:"Waiting",detail:"Blocked or delegated",items:open.filter((task)=>task.status==="WAITING")},{title:"Low leverage",detail:"Review when capacity opens",items:open.filter((task)=>task.priority==="LOW"&&task.status!=="WAITING")}];
+  return <div className="matrix-view">{quadrants.map((quadrant,index)=><section className={`card matrix-quadrant q${index+1}`} key={quadrant.title}><div className="section-head"><div><h2>{quadrant.title}</h2><span className="subtle">{quadrant.detail}</span></div><span className="badge">{quadrant.items.length}</span></div>{quadrant.items.map((task)=><TaskCard key={task.id} task={task} columns={columns} move={move} compact />)}{!quadrant.items.length&&<div className="subtle column-empty">No matching tasks</div>}</section>)}</div>;
 }
 function Calendar({ data }: { data: CalendarEvent[] }) {
   return (
@@ -596,6 +624,7 @@ function SettingsPanel({ data }: { data: Settings }) {
       });
       if (!response.ok) throw new Error("Settings could not be saved.");
       setMessage("Settings saved.");
+      window.dispatchEvent(new Event("chief-preferences"));
     } catch (cause) {
       setMessage(
         cause instanceof Error ? cause.message : "Settings could not be saved.",
@@ -605,7 +634,86 @@ function SettingsPanel({ data }: { data: Settings }) {
     }
   };
   return (
-    <div className="split">
+    <div className="settings-layout">
+      <section className="card settings-span">
+        <div className="section-head">
+          <div>
+            <h2>Workspace appearance</h2>
+            <div className="subtle">Shape how Chief looks and moves.</div>
+          </div>
+          <Palette size={18} />
+        </div>
+        <div className="preference-groups">
+          <PreferenceGroup label="Theme">
+            {(["system", "light", "dark"] as const).map((value) => (
+              <Choice
+                key={value}
+                label={value}
+                active={form.theme === value}
+                onClick={() => setForm((current) => ({ ...current, theme: value }))}
+              />
+            ))}
+          </PreferenceGroup>
+          <PreferenceGroup label="Accent">
+            {(["violet", "ocean", "ember", "mint"] as const).map((value) => (
+              <Choice
+                key={value}
+                label={value}
+                swatch={value}
+                active={form.accent === value}
+                onClick={() => setForm((current) => ({ ...current, accent: value }))}
+              />
+            ))}
+          </PreferenceGroup>
+          <PreferenceGroup label="Motion">
+            {(["full", "reduced"] as const).map((value) => (
+              <Choice
+                key={value}
+                label={value}
+                active={form.motion === value}
+                onClick={() => setForm((current) => ({ ...current, motion: value }))}
+              />
+            ))}
+          </PreferenceGroup>
+          <PreferenceGroup label="Density">
+            {(["comfortable", "compact"] as const).map((value) => (
+              <Choice
+                key={value}
+                label={value}
+                active={form.density === value}
+                onClick={() => setForm((current) => ({ ...current, density: value }))}
+              />
+            ))}
+          </PreferenceGroup>
+        </div>
+      </section>
+      <section className="card settings-span">
+        <div className="section-head">
+          <div>
+            <h2>Task workspace</h2>
+            <div className="subtle">Choose the default planning perspective.</div>
+          </div>
+          <Layers3 size={18} />
+        </div>
+        <div className="view-choices">
+          {([
+            ["kanban", "Kanban", "Move work through status columns."],
+            ["sprint", "Sprint", "Focus on active and upcoming work."],
+            ["list", "List", "Scan every commitment in one view."],
+            ["matrix", "Priority matrix", "Balance urgency and importance."],
+          ] as const).map(([value, label, detail]) => (
+            <button
+              className={`view-choice ${form.taskView === value ? "active" : ""}`}
+              onClick={() => setForm((current) => ({ ...current, taskView: value }))}
+              key={value}
+            >
+              <ListTodo size={18} />
+              <span><strong>{label}</strong><small>{detail}</small></span>
+              <i />
+            </button>
+          ))}
+        </div>
+      </section>
       <section className="card">
         <div className="section-head">
           <h2>General</h2>
@@ -673,14 +781,6 @@ function SettingsPanel({ data }: { data: Settings }) {
             />
           </label>
         </div>
-        {message && <p className="subtle">{message}</p>}
-        <button
-          className="button primary"
-          disabled={saving}
-          onClick={() => void save()}
-        >
-          {saving ? "Saving…" : "Save settings"}
-        </button>
       </section>
       <section className="card">
         <div className="section-head">
@@ -712,8 +812,28 @@ function SettingsPanel({ data }: { data: Settings }) {
           }
         />
       </section>
+      <div className="settings-savebar settings-span">
+        <div>
+          <strong>{message ?? "Preferences are saved to your workspace."}</strong>
+          <span className="subtle">Changes apply across signed-in sessions.</span>
+        </div>
+        <button
+          className="button primary"
+          disabled={saving}
+          onClick={() => void save()}
+        >
+          {saving ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+          {saving ? "Saving…" : "Apply customization"}
+        </button>
+      </div>
     </div>
   );
+}
+function PreferenceGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="preference-group"><span>{label}</span><div className="choice-row">{children}</div></div>;
+}
+function Choice({ label, active, swatch, onClick }: { label: string; active: boolean; swatch?: string; onClick: () => void }) {
+  return <button className={`choice ${active ? "active" : ""}`} onClick={onClick}>{swatch && <i className={`swatch ${swatch}`} />}<span>{label}</span>{active && <CheckCircle2 size={14} />}</button>;
 }
 function Toggle({
   label,

@@ -31,6 +31,26 @@ type SearchData = {
   emails: Array<{ id: string; subject: string; sender: string }>;
   tasks: Array<{ id: string; title: string; status: string }>;
 };
+type UiPreferences = {
+  theme: "system" | "light" | "dark";
+  accent: "violet" | "ocean" | "ember" | "mint";
+  motion: "full" | "reduced";
+  density: "comfortable" | "compact";
+  taskView: "kanban" | "sprint" | "list" | "matrix";
+};
+function applyPreferences(settings: UiPreferences) {
+  const root = document.documentElement;
+  const dark =
+    settings.theme === "dark" ||
+    (settings.theme === "system" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+  root.classList.toggle("dark", dark);
+  root.dataset.accent = settings.accent;
+  root.dataset.motion = settings.motion;
+  root.dataset.density = settings.density;
+  localStorage.setItem("chief-task-view", settings.taskView);
+  return dark;
+}
 export function AppShell({ children }: { children: React.ReactNode }) {
   const path = usePathname(),
     [initials, setInitials] = useState(""),
@@ -46,6 +66,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       (!stored && window.matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.classList.toggle("dark", enabled);
     setDark(enabled);
+  }, []);
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((settings: UiPreferences | null) => {
+        if (settings) setDark(applyPreferences(settings));
+      })
+      .catch(() => undefined);
+    const refresh = () => {
+      fetch("/api/settings")
+        .then((response) => (response.ok ? response.json() : null))
+        .then((settings: UiPreferences | null) => {
+          if (settings) setDark(applyPreferences(settings));
+        })
+        .catch(() => undefined);
+    };
+    window.addEventListener("chief-preferences", refresh);
+    return () => window.removeEventListener("chief-preferences", refresh);
   }, []);
   useEffect(() => {
     fetch("/api/auth/get-session")
@@ -112,6 +150,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             <X size={18} />
           </button>
+        </div>
+        <div className="core-widget" aria-hidden="true">
+          <div className="core-scene">
+            <div className="core-cube">
+              <i className="cube-face face-front" />
+              <i className="cube-face face-back" />
+              <i className="cube-face face-right" />
+              <i className="cube-face face-left" />
+              <i className="cube-face face-top" />
+              <i className="cube-face face-bottom" />
+            </div>
+            <span className="core-ring ring-a" />
+            <span className="core-ring ring-b" />
+          </div>
+          <div>
+            <strong>Chief core</strong>
+            <span><i className="live-dot" /> Online</span>
+          </div>
         </div>
         <Navigation path={path} close={() => setMobile(false)} />
         <div className="sidebar-foot nav">

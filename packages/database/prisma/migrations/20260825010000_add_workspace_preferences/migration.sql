@@ -1,0 +1,5 @@
+ALTER TABLE "UserSettings"
+ADD COLUMN "accent" TEXT NOT NULL DEFAULT 'violet',
+ADD COLUMN "motion" TEXT NOT NULL DEFAULT 'full',
+ADD COLUMN "density" TEXT NOT NULL DEFAULT 'comfortable',
+ADD COLUMN "taskView" TEXT NOT NULL DEFAULT 'kanban';
