@@ -7,6 +7,7 @@ import {
   googleClient,
   listRecentMessages,
   listUpcomingEvents,
+  startGmailWatch,
 } from "@chief/google";
 import {
   ApprovalPayloadSchema,
@@ -353,7 +354,24 @@ worker.on("error", (error) =>
     `[Chief worker] Queue connection unavailable: ${error.message}`,
   ),
 );
+const renewGmailWatches = async () => {
+  const topic = process.env.GMAIL_PUBSUB_TOPIC;
+  if (!topic) return;
+  const expiring = await db.gmailWatch.findMany({ where: { status: "ACTIVE", expiresAt: { lte: new Date(Date.now() + 86400000) } } });
+  for (const watch of expiring) {
+    try {
+      const metadata = await startGmailWatch(await authFor(watch.userId), topic);
+      await db.gmailWatch.update({ where: { id: watch.id }, data: metadata });
+    } catch (error) {
+      await db.gmailWatch.update({ where: { id: watch.id }, data: { status: "RECONNECT_REQUIRED" } });
+      console.error({ userId: watch.userId, error: error instanceof Error ? error.message : "Watch renewal failed" }, "Gmail watch renewal failed");
+    }
+  }
+};
+const watchRenewal = setInterval(() => void renewGmailWatches(), 12 * 60 * 60 * 1000);
+watchRenewal.unref();
 const shutdown = async () => {
+  clearInterval(watchRenewal);
   await worker.close();
   await connection.quit();
   await db.$disconnect();

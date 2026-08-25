@@ -66,6 +66,7 @@ model User {
   settings UserSettings?
   briefs DailyBrief[]
   followUpPreferences FollowUpPreference[]
+  gmailWatch GmailWatch?
 }
 model Session {
   id String @id @default(cuid())
@@ -120,6 +121,18 @@ model GoogleConnection {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+model GmailWatch {
+  id String @id @default(cuid())
+  userId String @unique
+  historyId String
+  expiresAt DateTime
+  status String @default("ACTIVE")
+  lastNotificationAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([expiresAt])
 }
 model Email {
   id String @id @default(cuid())

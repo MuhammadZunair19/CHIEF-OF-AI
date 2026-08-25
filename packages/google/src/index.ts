@@ -86,6 +86,22 @@ export const listRecentMessages = async (
     }),
   );
 };
+export const startGmailWatch = async (auth: GoogleAuthClient, topicName: string) => {
+  const response = await google.gmail({ version: "v1", auth }).users.watch({
+    userId: "me",
+    requestBody: { topicName, labelIds: ["INBOX"], labelFilterBehavior: "include" },
+  });
+  if (!response.data.historyId || !response.data.expiration)
+    throw new Error("Gmail did not return watch metadata");
+  return { historyId: response.data.historyId, expiresAt: new Date(Number(response.data.expiration)) };
+};
+export const verifyGooglePushToken = async (
+  token: string,
+  audience: string,
+): Promise<{ email?: string; email_verified?: boolean } | undefined> => {
+  const ticket = await new google.auth.OAuth2().verifyIdToken({ idToken: token, audience });
+  return ticket.getPayload();
+};
 export const listUpcomingEvents = async (auth: GoogleAuthClient) => {
   const calendar = google.calendar({ version: "v3", auth }),
     response = await calendar.events.list({

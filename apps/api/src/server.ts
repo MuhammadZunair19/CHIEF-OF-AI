@@ -7,6 +7,7 @@ import { db } from "@chief/database";
 import { enqueue, connection, agentQueue } from "@chief/queue";
 import { integrationState, loadEnv } from "@chief/config";
 import { z } from "zod";
+import { googleClient, startGmailWatch, verifyGooglePushToken } from "@chief/google";
 const env = loadEnv(),
   app = Fastify({
     logger: { level: env.NODE_ENV === "production" ? "info" : "debug" },
@@ -46,6 +47,11 @@ const requireUser = async (
     return null;
   }
   return session.user;
+};
+const googleAuthFor = async (userId: string) => {
+  const account = await db.account.findFirst({ where: { userId, providerId: "google" } });
+  if (!account) throw new Error("Google account is not connected");
+  return googleClient({ ...(account.accessToken ? { accessToken: account.accessToken } : {}), ...(account.refreshToken ? { refreshToken: account.refreshToken } : {}) });
 };
 app.get("/health", async () => ({ status: "ok" }));
 app.get("/ready", async (_req, reply) => {
@@ -190,6 +196,43 @@ app.post("/api/inbox/sync", async (req, reply) => {
     `gmail-sync-${user.id}-${new Date().toISOString().slice(0, 13)}`,
   );
   reply.code(202);
+  return { status: "queued" };
+});
+app.get("/api/gmail/watch", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const watch = await db.gmailWatch.findUnique({ where: { userId: user.id } });
+  return { configured: integrationState(env).gmailPush, active: Boolean(watch && watch.status === "ACTIVE" && watch.expiresAt > new Date()), expiresAt: watch?.expiresAt ?? null, lastNotificationAt: watch?.lastNotificationAt ?? null };
+});
+app.post("/api/gmail/watch", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  if (!env.GMAIL_PUBSUB_TOPIC || !integrationState(env).gmailPush)
+    return reply.code(503).send({ error: "Gmail push synchronization is not configured" });
+  const metadata = await startGmailWatch(await googleAuthFor(user.id), env.GMAIL_PUBSUB_TOPIC);
+  const watch = await db.gmailWatch.upsert({ where: { userId: user.id }, update: { ...metadata, status: "ACTIVE" }, create: { userId: user.id, ...metadata } });
+  reply.code(201);
+  return watch;
+});
+app.post("/api/google/gmail/push", async (req, reply) => {
+  if (!env.GMAIL_PUSH_AUDIENCE || !env.GMAIL_PUSH_SERVICE_ACCOUNT)
+    return reply.code(503).send({ error: "Push verification is not configured" });
+  const authorization = req.headers.authorization,
+    token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+  if (!token) return reply.code(401).send({ error: "Missing push identity" });
+  try {
+    const identity = await verifyGooglePushToken(token, env.GMAIL_PUSH_AUDIENCE);
+    if (!identity?.email_verified || identity.email !== env.GMAIL_PUSH_SERVICE_ACCOUNT)
+      return reply.code(403).send({ error: "Invalid push identity" });
+  } catch {
+    return reply.code(401).send({ error: "Invalid push identity" });
+  }
+  const envelope = z.object({ message: z.object({ data: z.string(), messageId: z.string().optional() }) }).parse(req.body),
+    notification = z.object({ emailAddress: z.string().email(), historyId: z.string() }).parse(JSON.parse(Buffer.from(envelope.message.data, "base64").toString("utf8"))),
+    user = await db.user.findUnique({ where: { email: notification.emailAddress } });
+  if (!user) return reply.code(204).send();
+  await db.gmailWatch.updateMany({ where: { userId: user.id }, data: { historyId: notification.historyId, lastNotificationAt: new Date(), status: "ACTIVE" } });
+  await enqueue({ name: "gmail.sync", userId: user.id }, `gmail-push-${user.id}-${notification.historyId}`);
   return { status: "queued" };
 });
 app.get("/api/tasks", async (req, reply) => {

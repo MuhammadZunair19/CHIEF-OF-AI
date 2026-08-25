@@ -16,6 +16,7 @@ import {
   ListTodo,
   LoaderCircle,
   Palette,
+  RadioTower,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -405,6 +406,8 @@ function Dashboard({ data }: { data: DashboardData }) {
 function greeting(){const hour=new Date().getHours();return hour<12?"Good morning":hour<18?"Good afternoon":"Good evening"}
 function Inbox({ data }: { data: Email[] }) {
   return (
+    <>
+    <PushSyncStatus />
     <section className="card">
       {data.length ? (
         <div className="list">
@@ -440,8 +443,10 @@ function Inbox({ data }: { data: Email[] }) {
         />
       )}
     </section>
+    </>
   );
 }
+function PushSyncStatus(){const[status,setStatus]=useState<{configured:boolean;active:boolean;expiresAt:string|null;lastNotificationAt:string|null}|null>(null),[starting,setStarting]=useState(false),[error,setError]=useState<string|null>(null);const load=useCallback(()=>fetch("/api/gmail/watch").then(response=>response.ok?response.json():null).then(setStatus).catch(()=>setStatus(null)),[]);useEffect(()=>{void load()},[load]);const start=async()=>{setStarting(true);setError(null);try{const response=await fetch("/api/gmail/watch",{method:"POST"});if(!response.ok)throw new Error("Live Gmail updates could not be enabled.");await load()}catch(cause){setError(cause instanceof Error?cause.message:"Live Gmail updates could not be enabled.")}finally{setStarting(false)}};if(!status)return null;return <section className={`push-status ${status.active?"active":""}`}><div className="push-icon"><RadioTower size={18}/><i/></div><div className="grow"><strong>{status.active?"Live Gmail updates are active":status.configured?"Enable live Gmail updates":"Live updates need Pub/Sub setup"}</strong><span className="subtle">{status.active?`Chief listens for new inbox activity${status.lastNotificationAt?` · Last signal ${formatDate(status.lastNotificationAt)}`:""}.`:status.configured?"Start a secure Gmail watch to sync without polling.":"Add the Google Cloud project, Pub/Sub topic, OIDC audience, and service account settings."}</span>{error&&<span className="danger-text">{error}</span>}</div>{status.configured&&!status.active&&<button className="button primary" disabled={starting} onClick={()=>void start()}>{starting?<LoaderCircle className="spin" size={15}/>:<RadioTower size={15}/>}Enable live sync</button>}{status.active&&status.expiresAt&&<span className="badge">Renews before {new Date(status.expiresAt).toLocaleDateString()}</span>}</section>}
 function Tasks({ data }: { data: Task[] }) {
   const columns = [
       "BACKLOG",
