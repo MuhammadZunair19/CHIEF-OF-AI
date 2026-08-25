@@ -71,7 +71,7 @@ export function FollowUpRadar() {
           <div className="eyebrow">Proactive attention</div>
           <h1 className="title">Follow-up radar</h1>
           <div className="subtle">
-            Chief surfaces commitments that are quietly slipping.
+            Morrow surfaces commitments that are quietly slipping.
           </div>
         </div>
         <button className="button" onClick={() => void load()}>

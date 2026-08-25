@@ -1,6 +1,6 @@
-# Chief
+# Morrow
 
-Chief is a production-oriented AI Chief of Staff for Gmail, Google Calendar, tasks, and human-approved external actions. It uses a separate API and worker so an HTTP request can never directly send an email or create a meeting.
+Morrow is a private-by-design workday assistant for Gmail, Google Calendar, tasks, and human-approved external actions. It uses a separate API and worker so an HTTP request can never directly send an email or create a meeting.
 
 ## Architecture
 
@@ -27,7 +27,7 @@ The web app runs at `http://localhost:3000`, the API at `http://localhost:4000`,
 
 ## Google and Gemini
 
-Create a Google Cloud OAuth web client, enable Gmail API and Google Calendar API, and register `http://localhost:3000/api/auth/callback/google`. Chief requests read/compose/send Gmail scopes and read/write Calendar scopes. Add the client values and a base64-encoded 32-byte `TOKEN_ENCRYPTION_KEY` to `.env`.
+Create a Google Cloud OAuth web client, enable Gmail API and Google Calendar API, and register `http://localhost:3000/api/auth/callback/google`. Morrow requests read/compose/send Gmail scopes and read/write Calendar scopes. Add the client values and a base64-encoded 32-byte `TOKEN_ENCRYPTION_KEY` to `.env`.
 
 Create a Gemini API key and set `GEMINI_API_KEY`. The provider boundary is `LLMProvider`; the initial provider uses `gemini-3.7-flash` with schema-validated JSON. Email text is treated as untrusted input and private chain-of-thought is never requested, stored, or displayed.
 

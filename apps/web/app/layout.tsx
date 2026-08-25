@@ -1,18 +1,18 @@
 import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
-  title: { default: "Chief — AI Chief of Staff", template: "%s · Chief" },
+  title: { default: "Morrow — Stay ahead of your day", template: "%s · Morrow" },
   description:
     "Your inbox, calendar, and priorities—organized with deliberate human approval.",
   openGraph: {
-    title: "Chief — AI Chief of Staff",
+    title: "Morrow — Stay ahead of your day",
     description:
       "Your inbox, calendar, and priorities—organized with deliberate human approval.",
     type: "website",
   },
   twitter: {
     card: "summary",
-    title: "Chief — AI Chief of Staff",
+    title: "Morrow — Stay ahead of your day",
     description: "A private-by-design executive assistant.",
   },
 };

@@ -194,9 +194,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className={`shell ${quiet ? "quiet-shell" : ""}`}>
       <aside className={`sidebar ${mobile ? "sidebar-open" : ""}`}>
         <div className="brand">
-          <span className="brandmark">C</span>
+            <span className="brandmark">M</span>
           <span className="brand-copy">
-            Chief <small>AI Chief of Staff</small>
+            Morrow <small>Workday intelligence</small>
           </span>
           <button
             className="icon-button mobile-menu"
@@ -220,7 +220,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="core-ring ring-b" />
           </div>
           <div>
-            <strong>Chief core</strong>
+            <strong>Morrow core</strong>
             <span>
               <i className="live-dot" />{" "}
               {coreState === "online"
@@ -479,7 +479,7 @@ function SearchDialog({
       className="dialog-layer"
       role="dialog"
       aria-modal="true"
-      aria-label="Search Chief"
+      aria-label="Search Morrow"
     >
       <button
         className="dialog-scrim"

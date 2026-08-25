@@ -522,7 +522,7 @@ worker.on("failed", (job, error) =>
 );
 worker.on("error", (error) =>
   console.error(
-    `[Chief worker] Queue connection unavailable: ${error.message}`,
+    `[Morrow worker] Queue connection unavailable: ${error.message}`,
   ),
 );
 const renewGmailWatches = async () => {

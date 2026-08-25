@@ -27,12 +27,12 @@ export function Onboarding() {
   return (
     <main style={{ maxWidth: 680, margin: "70px auto", padding: 24 }}>
       <div className="brand">
-        <span className="brandmark">C</span>Chief
+        <span className="brandmark">M</span>Morrow
       </div>
       <div className="eyebrow">Workspace setup</div>
       <h1 className="title">Connect your working day.</h1>
       <p className="subtle">
-        Chief verifies your live configuration before opening the workspace.
+        Morrow verifies your live configuration before opening the workspace.
       </p>
       <div className="card" style={{ marginTop: 28 }}>
         {!setup && !error && (
@@ -44,7 +44,7 @@ export function Onboarding() {
         {error && (
           <div className="notice">
             <AlertTriangle size={18} />
-            Chief could not verify the current setup.
+            Morrow could not verify the current setup.
           </div>
         )}
         {setup && (

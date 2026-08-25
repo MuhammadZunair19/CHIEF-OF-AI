@@ -10,7 +10,7 @@ connection.on("error", (error) => {
   if (now - lastRedisWarning > 30000) {
     lastRedisWarning = now;
     console.error(
-      `[Chief infrastructure] Redis unavailable at ${process.env.REDIS_URL}: ${error.message}`,
+      `[Morrow infrastructure] Redis unavailable at ${process.env.REDIS_URL}: ${error.message}`,
     );
   }
 });

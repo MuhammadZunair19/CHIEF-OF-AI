@@ -22,19 +22,19 @@ export default function Login() {
     <main className="login">
       <section className="login-copy">
         <div className="brand">
-          <span className="brandmark">C</span>
+          <span className="brandmark">M</span>
           <span className="brand-copy">
-            Chief <small>AI Chief of Staff</small>
+            Morrow <small>Workday intelligence</small>
           </span>
         </div>
-        <div className="eyebrow">AI Chief of Staff</div>
+        <div className="eyebrow">Your personal work companion</div>
         <h1 className="title login-title">
           Your workday,
           <br />
           <span>quietly organized.</span>
         </h1>
         <p className="subtle" style={{ fontSize: 17 }}>
-          Chief turns your inbox and calendar into a focused plan—while keeping
+          Morrow turns your inbox and calendar into a focused plan—while keeping
           every sensitive action under your control.
         </p>
         <GoogleSignIn />
@@ -52,12 +52,12 @@ export default function Login() {
         <div className="preview-card">
           <div className="section-head">
             <div>
-              <div className="eyebrow">How Chief works</div>
+              <div className="eyebrow">How Morrow works</div>
               <h2 style={{ fontFamily: "Georgia", fontWeight: 500 }}>
                 From signal to approved action.
               </h2>
             </div>
-            <span className="badge">Chief</span>
+            <span className="badge">Morrow</span>
           </div>
           {capabilities.map(({ Icon, title, detail }, index) => (
             <div

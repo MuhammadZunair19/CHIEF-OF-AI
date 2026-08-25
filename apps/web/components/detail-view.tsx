@@ -158,7 +158,7 @@ function EmailDetail({ id, data }: { id: string; data: Email }) {
         </section>
         <aside className="card">
           <div className="section-head">
-            <h2>Chief analysis</h2>
+            <h2>Morrow analysis</h2>
             {data.analysisRecord && (
               <span className="badge">{data.analysisRecord.priority}</span>
             )}
@@ -182,7 +182,7 @@ function EmailDetail({ id, data }: { id: string; data: Email }) {
           ) : (
             <>
               <p className="subtle">
-                Analyze this message only when you need Chief&apos;s help.
+                Analyze this message only when you need Morrow&apos;s help.
               </p>
               <button
                 className="button primary"
@@ -245,7 +245,7 @@ function ReplyStudio({
     });
     setMessage(
       response.ok
-        ? "Draft queued. Chief will refresh this studio when it is ready."
+        ? "Draft queued. Morrow will refresh this studio when it is ready."
         : "Draft generation could not be queued.",
     );
     setWorking(false);
@@ -612,7 +612,7 @@ function ExecutionCountdown({
       <div>
         <strong>{seconds ? "Safety window open" : "Execution starting"}</strong>
         <p className="subtle">
-          Chief waits briefly so you can stop an accidental approval.
+          Morrow waits briefly so you can stop an accidental approval.
         </p>
         <button
           className="button"
