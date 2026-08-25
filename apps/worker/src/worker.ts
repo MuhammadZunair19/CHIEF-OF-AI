@@ -251,6 +251,24 @@ async function analyze(userId: string, emailId: string) {
     throw error;
   }
 }
+async function draftReply(userId: string, emailId: string, tone: string) {
+  const email = await db.email.findFirstOrThrow({ where: { id: emailId, userId } }),
+    settings = await db.userSettings.upsert({ where: { userId }, update: {}, create: { userId } }),
+    run = await db.agentRun.create({ data: { userId, emailId, trigger: "DRAFT_REQUEST", status: "RUNNING", startedAt: new Date(), inputSummary: `Draft ${tone} reply to ${email.subject}` } });
+  await event(userId, "agent.run.started", `Drafting a ${tone} reply`, run.id);
+  try {
+    const reply = await createProvider().draftReply({ subject: email.subject, sender: email.sender, body: email.bodyText ?? email.preview, timezone: settings.timezone, tone }),
+      draft = await db.emailDraft.create({ data: { emailId, body: reply.body, recipients: [emailAddress(email.sender)], subject: `Re: ${email.subject}`, status: "SUGGESTED" } });
+    await db.agentRun.update({ where: { id: run.id }, data: { status: "COMPLETED", finishedAt: new Date(), resultSummary: `${tone} reply drafted` } });
+    await event(userId, "agent.run.completed", "Reply draft is ready for review", run.id, { emailId, draftId: draft.id });
+    return draft;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Draft generation failed";
+    await db.agentRun.update({ where: { id: run.id }, data: { status: "FAILED", finishedAt: new Date(), error: message } });
+    await event(userId, "agent.run.failed", "Reply drafting is temporarily unavailable", run.id);
+    throw error;
+  }
+}
 async function execute(userId: string, approvalId: string) {
   const approval = await db.approvalRequest.findFirstOrThrow({
     where: { id: approvalId, userId },
@@ -357,6 +375,8 @@ const worker = new Worker<QueueJob>(
         return { skipped: "Automatic email analysis is disabled" };
       return analyze(payload.userId, payload.emailId);
     }
+    if (payload.name === "email.draft")
+      return draftReply(payload.userId, payload.emailId, payload.tone);
     return execute(payload.userId, payload.approvalId);
   },
   { connection, concurrency: 2, lockDuration: 120000 },

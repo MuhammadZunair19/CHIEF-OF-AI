@@ -24,6 +24,8 @@ export const EmailAnalysisSchema = z.object({
   suggestedReply: z.string().optional(),
 });
 export type EmailAnalysis = z.infer<typeof EmailAnalysisSchema>;
+export const DraftReplySchema = z.object({ body: z.string().min(1).max(10000) });
+export type DraftReply = z.infer<typeof DraftReplySchema>;
 export const ApprovalPayloadSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("SEND_EMAIL"),
@@ -54,6 +56,12 @@ export const QueueJobSchema = z.discriminatedUnion("name", [
     name: z.literal("email.analyze"),
     userId: z.string(),
     emailId: z.string(),
+  }),
+  z.object({
+    name: z.literal("email.draft"),
+    userId: z.string(),
+    emailId: z.string(),
+    tone: z.enum(["friendly", "formal", "direct", "concise", "detailed"]),
   }),
   z.object({
     name: z.literal("approval.execute"),

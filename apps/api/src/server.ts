@@ -182,12 +182,45 @@ app.post("/api/inbox/:id/task", async (req, reply) => {
   reply.code(201);
   return task;
 });
+app.post("/api/inbox/:id/draft", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const id = (req.params as { id: string }).id,
+    body = z.object({ tone: z.enum(["friendly", "formal", "direct", "concise", "detailed"]) }).parse(req.body),
+    email = await db.email.findFirst({ where: { id, userId: user.id } });
+  if (!email) return reply.code(404).send({ error: "Email not found" });
+  const minute = new Date().toISOString().slice(0, 16).replaceAll(":", "-");
+  await enqueue({ name: "email.draft", userId: user.id, emailId: id, tone: body.tone }, `draft-${id}-${body.tone}-${minute}`);
+  reply.code(202);
+  return { status: "queued" };
+});
+app.patch("/api/drafts/:id", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const id = (req.params as { id: string }).id,
+    body = z.object({ body: z.string().min(1).max(20000), subject: z.string().min(1).max(500), recipients: z.array(z.string().email()).min(1).max(20) }).parse(req.body),
+    draft = await db.emailDraft.findFirst({ where: { id, email: { userId: user.id } } });
+  if (!draft) return reply.code(404).send({ error: "Draft not found" });
+  return db.emailDraft.update({ where: { id }, data: { ...body, status: "EDITED" } });
+});
+app.post("/api/drafts/:id/approval", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const id = (req.params as { id: string }).id,
+    draft = await db.emailDraft.findFirst({ where: { id, email: { userId: user.id } }, include: { email: true, approvals: { where: { status: "PENDING" } } } });
+  if (!draft) return reply.code(404).send({ error: "Draft not found" });
+  if (draft.approvals.length) return reply.code(409).send({ error: "Draft is already awaiting approval" });
+  const approval = await db.approvalRequest.create({ data: { userId: user.id, draftId: id, type: "SEND_EMAIL", reason: "Send the reviewed reply from Reply Studio", riskLevel: "HIGH", payload: { kind: "SEND_EMAIL", to: draft.recipients, subject: draft.subject, body: draft.body, gmailThreadId: draft.email.gmailThreadId }, status: "PENDING" } });
+  await db.emailDraft.update({ where: { id }, data: { status: "PENDING_APPROVAL" } });
+  reply.code(201);
+  return approval;
+});
 app.get("/api/inbox/:id", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   return db.email.findFirst({
     where: { id: (req.params as { id: string }).id, userId: user.id },
-    include: { analysisRecord: true, drafts: true, tasks: true },
+    include: { analysisRecord: true, drafts: { orderBy: { createdAt: "desc" } }, tasks: true },
   });
 });
 app.post("/api/inbox/:id/analyze", async (req, reply) => {

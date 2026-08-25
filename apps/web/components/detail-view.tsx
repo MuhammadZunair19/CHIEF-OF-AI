@@ -4,10 +4,13 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  History,
   LoaderCircle,
   Mail,
+  Send,
   ShieldCheck,
   Sparkles,
+  WandSparkles,
   XCircle,
 } from "lucide-react";
 type DetailKind = "inbox" | "approvals" | "activity";
@@ -24,7 +27,7 @@ type Email = {
     requiresAction: boolean;
   } | null;
   tasks: Array<{ id: string; title: string; priority: string }>;
-  drafts: Array<{ id: string; body: string; subject: string }>;
+  drafts: Array<{ id: string; body: string; subject: string; recipients:string[]; status:string; createdAt:string }>;
 };
 type Approval = {
   id: string;
@@ -189,9 +192,11 @@ function EmailDetail({ id, data }: { id: string; data: Email }) {
           )}
         </aside>
       </div>
+      <ReplyStudio key={data.drafts[0]?.id ?? "new"} emailId={id} drafts={data.drafts} />
     </div>
   );
 }
+function ReplyStudio({emailId,drafts}:{emailId:string;drafts:Email["drafts"]}){const[currentId,setCurrentId]=useState(drafts[0]?.id??null),current=drafts.find(draft=>draft.id===currentId)??drafts[0],[body,setBody]=useState(current?.body??""),[subject,setSubject]=useState(current?.subject??""),[recipients,setRecipients]=useState(current?.recipients.join(", ")??""),[tone,setTone]=useState<"friendly"|"formal"|"direct"|"concise"|"detailed">("friendly"),[working,setWorking]=useState(false),[message,setMessage]=useState<string|null>(null);const select=(draft:Email["drafts"][number])=>{setCurrentId(draft.id);setBody(draft.body);setSubject(draft.subject);setRecipients(draft.recipients.join(", "));setMessage(null)};const generate=async()=>{setWorking(true);setMessage(null);const response=await fetch(`/api/inbox/${emailId}/draft`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({tone})});setMessage(response.ok?"Draft queued. Chief will refresh this studio when it is ready.":"Draft generation could not be queued.");setWorking(false)};const save=async()=>{if(!current)return;setWorking(true);const response=await fetch(`/api/drafts/${current.id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({body,subject,recipients:recipients.split(",").map(value=>value.trim()).filter(Boolean)})});setMessage(response.ok?"Draft changes saved.":"Draft could not be saved. Check recipient addresses.");setWorking(false)};const requestApproval=async()=>{if(!current)return;setWorking(true);const saved=await fetch(`/api/drafts/${current.id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({body,subject,recipients:recipients.split(",").map(value=>value.trim()).filter(Boolean)})});const response=saved.ok?await fetch(`/api/drafts/${current.id}/approval`,{method:"POST"}):saved;setMessage(response.ok?"Send action is now waiting in Approvals.":"Approval could not be created.");setWorking(false)};return <section className="reply-studio card"><div className="section-head"><div><div className="eyebrow">Smart reply studio</div><h2>Shape the response</h2><span className="subtle">Generate only when requested, edit freely, then send through approval.</span></div><WandSparkles size={19}/></div><div className="reply-toolbar"><div className="tone-picker">{(["friendly","formal","direct","concise","detailed"] as const).map(value=><button className={tone===value?"active":""} onClick={()=>setTone(value)} key={value}>{value}</button>)}</div><button className="button primary" onClick={()=>void generate()} disabled={working}>{working?<LoaderCircle className="spin" size={15}/>:<Sparkles size={15}/>}Generate version</button></div>{drafts.length?<div className="studio-grid"><aside className="version-rail"><div className="command-group-label"><History size={12}/>Version history</div>{drafts.map((draft,index)=><button className={draft.id===current?.id?"active":""} onClick={()=>select(draft)} key={draft.id}><strong>Version {drafts.length-index}</strong><span>{draft.status.replaceAll("_"," ")}</span><time>{new Date(draft.createdAt).toLocaleString()}</time></button>)}</aside><div className="draft-editor"><label className="field">To<input className="input" value={recipients} onChange={event=>setRecipients(event.target.value)}/></label><label className="field">Subject<input className="input" value={subject} onChange={event=>setSubject(event.target.value)}/></label><label className="field grow">Message<textarea className="input message-body" rows={12} value={body} onChange={event=>setBody(event.target.value)}/></label><div className="approval-preview"><ShieldCheck size={17}/><div><strong>What will happen?</strong><span>Saving changes never sends email. Request approval creates a review item; Gmail sends only after you approve it.</span></div></div>{message&&<p className="subtle">{message}</p>}<div className="row studio-actions"><button className="button" onClick={()=>void save()} disabled={working}>Save draft</button><button className="button primary" onClick={()=>void requestApproval()} disabled={working}><Send size={15}/>Request send approval</button></div></div></div>:<div className="studio-empty"><Mail size={25}/><strong>No draft versions yet</strong><span className="subtle">Choose a tone and generate a reply when you need one.</span></div>}</section>}
 function ApprovalDetail({
   data,
   reload,
