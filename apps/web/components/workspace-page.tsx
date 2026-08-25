@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
+  Archive,
   AlertTriangle,
   ArrowUpRight,
   CalendarDays,
@@ -12,6 +13,7 @@ import {
   Gauge,
   Grid2X2,
   Inbox as InboxIcon,
+  Keyboard,
   Layers3,
   ListTodo,
   LoaderCircle,
@@ -405,17 +407,27 @@ function Dashboard({ data }: { data: DashboardData }) {
 }
 function greeting(){const hour=new Date().getHours();return hour<12?"Good morning":hour<18?"Good afternoon":"Good evening"}
 function Inbox({ data }: { data: Email[] }) {
+  const [emails,setEmails]=useState(data),[cursor,setCursor]=useState(0),[selected,setSelected]=useState<Set<string>>(new Set()),[notice,setNotice]=useState<string|null>(null);
+  const active=emails[cursor];
+  const apply=useCallback(async(action:"SNOOZE"|"HANDLE",override?:string[])=>{const ids=override??(selected.size?[...selected]:active?[active.id]:[]);if(!ids.length)return;const response=await fetch("/api/inbox/triage",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({ids,action,...action==="SNOOZE"?{days:1}:{}})});if(response.ok){setEmails(current=>current.filter(email=>!ids.includes(email.id)));setSelected(new Set());setCursor(0);setNotice(action==="SNOOZE"?"Email snoozed until tomorrow.":"Email marked handled.")}},[active,selected]);
+  const run=useCallback(async(action:"ANALYZE"|"TASK"|"REPLY")=>{if(!active)return;if(action==="REPLY"){location.assign(`/inbox/${active.id}?compose=1`);return}const response=await fetch(`/api/inbox/${active.id}/${action==="ANALYZE"?"analyze":"task"}`,{method:"POST"});setNotice(response.ok?action==="ANALYZE"?"Analysis queued.":"Task created from email.":action==="TASK"?"A task already exists for this email.":"Analysis could not be queued.")},[active]);
+  useEffect(()=>{const keyboard=(event:KeyboardEvent)=>{const target=event.target as HTMLElement;if(["INPUT","TEXTAREA","SELECT"].includes(target.tagName))return;const key=event.key.toLowerCase();if(key==="j"){event.preventDefault();setCursor(current=>Math.min(emails.length-1,current+1))}if(key==="k"){event.preventDefault();setCursor(current=>Math.max(0,current-1))}if(key==="a")void run("ANALYZE");if(key==="t")void run("TASK");if(key==="r")void run("REPLY");if(key==="s")void apply("SNOOZE");if(key==="e")void apply("HANDLE");if(key==="enter"&&active)location.assign(`/inbox/${active.id}`);if(key==="escape")setSelected(new Set())};window.addEventListener("keydown",keyboard);return()=>window.removeEventListener("keydown",keyboard)},[active,apply,emails.length,run]);
+  const toggle=(id:string)=>setSelected(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next});
   return (
     <>
     <PushSyncStatus />
     <section className="card">
-      {data.length ? (
+      <div className="triage-toolbar"><div><Keyboard size={16}/><strong>{selected.size?`${selected.size} selected`:"Keyboard triage"}</strong><span className="subtle">J/K navigate · A analyze · T task · R reply · S snooze · E handled</span></div>{selected.size>0&&<div className="row"><button className="button" onClick={()=>void apply("SNOOZE")}><Clock3 size={14}/>Snooze</button><button className="button" onClick={()=>void apply("HANDLE")}><Archive size={14}/>Handled</button></div>}</div>
+      {notice&&<div className="triage-notice">{notice}</div>}
+      {emails.length ? (
         <div className="list">
-          {data.map((email) => (
+          {emails.map((email,index) => (
+            <div className={`triage-row ${cursor===index?"cursor":""} ${selected.has(email.id)?"selected":""}`} key={email.id}>
+            <button className="select-email" onClick={()=>toggle(email.id)} aria-label={`${selected.has(email.id)?"Deselect":"Select"} ${email.subject}`}><i>{selected.has(email.id)&&<CheckCircle2 size={13}/>}</i></button>
             <Link
               className="list-item item-link"
               href={`/inbox/${email.id}`}
-              key={email.id}
+              onMouseEnter={()=>setCursor(index)}
             >
               <span
                 className="dot"
@@ -433,13 +445,14 @@ function Inbox({ data }: { data: Email[] }) {
               )}
               <time className="subtle">{formatDate(email.receivedAt)}</time>
             </Link>
+            </div>
           ))}
         </div>
       ) : (
         <Empty
           Icon={InboxIcon}
           title="No synchronized messages"
-          detail="Use Sync Gmail to retrieve your recent messages."
+          detail="Your active inbox is clear. Sync Gmail or wait for live updates."
         />
       )}
     </section>

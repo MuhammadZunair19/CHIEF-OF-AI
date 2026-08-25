@@ -156,11 +156,31 @@ app.get("/api/inbox", async (req, reply) => {
   const user = await requireUser(req, reply);
   if (!user) return;
   return db.email.findMany({
-    where: { userId: user.id },
+    where: { userId: user.id, triageStatus: "INBOX", OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: new Date() } }] },
     orderBy: { receivedAt: "desc" },
     take: 50,
     include: { analysisRecord: true, drafts: true },
   });
+});
+app.patch("/api/inbox/triage", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const body = z.object({ ids: z.array(z.string()).min(1).max(50), action: z.enum(["SNOOZE", "HANDLE", "RESTORE"]), days: z.number().int().min(1).max(90).optional() }).parse(req.body),
+    data = body.action === "HANDLE" ? { triageStatus: "HANDLED", handledAt: new Date(), snoozedUntil: null } : body.action === "RESTORE" ? { triageStatus: "INBOX", handledAt: null, snoozedUntil: null } : { triageStatus: "INBOX", handledAt: null, snoozedUntil: new Date(Date.now() + (body.days ?? 1) * 86400000) };
+  const result = await db.email.updateMany({ where: { userId: user.id, id: { in: body.ids } }, data });
+  return { updated: result.count };
+});
+app.post("/api/inbox/:id/task", async (req, reply) => {
+  const user = await requireUser(req, reply);
+  if (!user) return;
+  const id = (req.params as { id: string }).id,
+    email = await db.email.findFirst({ where: { id, userId: user.id }, include: { analysisRecord: true } });
+  if (!email) return reply.code(404).send({ error: "Email not found" });
+  const existing = await db.task.findFirst({ where: { userId: user.id, emailId: id, status: { not: "ARCHIVED" } } });
+  if (existing) return reply.code(409).send({ error: "A task already exists for this email" });
+  const task = await db.task.create({ data: { userId: user.id, emailId: id, title: email.subject, priority: email.analysisRecord?.priority ?? "MEDIUM", source: "EMAIL", createdByAi: false } });
+  reply.code(201);
+  return task;
 });
 app.get("/api/inbox/:id", async (req, reply) => {
   const user = await requireUser(req, reply);

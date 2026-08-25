@@ -145,6 +145,9 @@ model Email {
   preview String
   bodyText String?
   unread Boolean @default(true)
+  triageStatus String @default("INBOX")
+  snoozedUntil DateTime?
+  handledAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -155,6 +158,7 @@ model Email {
   runs AgentRun[]
   @@unique([userId, gmailMessageId])
   @@index([userId, receivedAt(sort: Desc)])
+  @@index([userId, triageStatus, snoozedUntil])
 }
 model EmailAnalysis {
   id String @id @default(cuid())
